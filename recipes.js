@@ -482,6 +482,7 @@
 
                     // Calculated totals
                     let milkWaterEq = 0;
+                    let totalWeight = flourAmount + waterAmount; // Restored initialization
                     extraIngredients.forEach(i => {
                         // Re-find to check if it is milk
                         const item = ingredients.find(inv => inv.id === i.id);
@@ -569,4 +570,3 @@
         `;
     }
 })();
-
