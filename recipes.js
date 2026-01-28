@@ -20,15 +20,29 @@
         let totalCost = 0;
         const normalize = window.App.Utils.normalizeAmount;
 
-        // 1. Flour Cost
-        const flour = ingredients.find(i => i.id === recipeData.flourId);
-        if (flour && flour.price && flour.packageSize) {
-            // Determine unit: strict packageUnit check
-            const unit = flour.packageUnit;
-            if (unit) {
-                const packBase = normalize(flour.packageSize, unit);
-                const pricePerGram = (packBase > 0) ? (flour.price / packBase) : 0;
-                totalCost += (recipeData.flourAmount || 0) * pricePerGram;
+        // 1. Flour Cost (Multi-Flour Support)
+        if (recipeData.flours && recipeData.flours.length > 0) {
+            recipeData.flours.forEach(f => {
+                const flourItem = ingredients.find(i => i.id === f.id);
+                if (flourItem && flourItem.price && flourItem.packageSize) {
+                    const unit = flourItem.packageUnit;
+                    if (unit) {
+                        const packBase = normalize(flourItem.packageSize, unit);
+                        const pricePerGram = (packBase > 0) ? (flourItem.price / packBase) : 0;
+                        totalCost += (f.amount || 0) * pricePerGram;
+                    }
+                }
+            });
+        } else if (recipeData.flourId) {
+            // Backward Compatibility
+            const flour = ingredients.find(i => i.id === recipeData.flourId);
+            if (flour && flour.price && flour.packageSize) {
+                const unit = flour.packageUnit;
+                if (unit) {
+                    const packBase = normalize(flour.packageSize, unit);
+                    const pricePerGram = (packBase > 0) ? (flour.price / packBase) : 0;
+                    totalCost += (recipeData.flourAmount || 0) * pricePerGram;
+                }
             }
         }
 
@@ -57,14 +71,25 @@
         return `
             <div class="recipe-list" style="display: grid; gap: 16px;">
                 ${recipes.slice().reverse().map((recipe, index) => {
-            // Logic to handle old vs new data structure slightly if needed, but we overwrite
-            const flour = ingredients.find(i => i.id === recipe.flourId);
+
+            // Flour Display Logic
+            let flourName = 'Un?';
+            if (recipe.flours && recipe.flours.length > 1) {
+                flourName = `${recipe.flours.length} Çeşit Un Mix`;
+            } else if (recipe.flours && recipe.flours.length === 1) {
+                const f = ingredients.find(i => i.id === recipe.flours[0].id);
+                flourName = f ? f.name : 'Bilinmeyen Un';
+            } else if (recipe.flourId) {
+                const f = ingredients.find(i => i.id === recipe.flourId);
+                flourName = f ? f.name : 'Un?';
+            }
 
             // Re-calculate derived values
             const totalCost = calculateRecipeCost({
+                flours: recipe.flours,
                 flourId: recipe.flourId,
-                flourAmount: recipe.flourAmount, // New field
-                ingredients: recipe.ingredients // Now only extras
+                flourAmount: recipe.flourAmount,
+                ingredients: recipe.ingredients
             });
 
             const totalWeight = (recipe.totalWeight || 0);
@@ -72,24 +97,79 @@
             const yieldCount = Math.floor(totalWeight / ballWeight);
             const costPerBall = yieldCount > 0 ? (totalCost / yieldCount) : 0;
 
+            // --- UI LOGIC START ---
+            let milkAmount = 0;
+            let oilAmount = 0;
+
+            // Analyze Ingredients
+            if (recipe.ingredients) {
+                recipe.ingredients.forEach(ri => {
+                    const invItem = ingredients.find(i => i.id === ri.id);
+                    if (invItem) {
+                        const nameLower = invItem.name.toLowerCase();
+                        // Milk Check
+                        if (nameLower.includes('süt') || nameLower.includes('milk') || invItem.type === 'milk') {
+                            milkAmount += ri.amount;
+                        }
+                        // Oil Check (yağ, oil, zeytin, olive)
+                        if (nameLower.includes('yağ') || nameLower.includes('oil') || nameLower.includes('zeytin') || nameLower.includes('olive')) {
+                            oilAmount += ri.amount;
+                        }
+                    }
+                });
+            }
+
+            // Hydration Display
+            const effectiveHyd_display = recipe.effectiveHydration || recipe.hydration; // Fallback
+            const hydBadgeText = `%${recipe.hydration} Su${recipe.effectiveHydration && recipe.effectiveHydration !== recipe.hydration ? ` → %${recipe.effectiveHydration} Efektif` : ''}`;
+
+            // Dough Character
+            let doughChar = '';
+            let doughCharColor = '#888';
+            const effVal = parseFloat(effectiveHyd_display);
+            if (!isNaN(effVal)) {
+                if (effVal < 58) { doughChar = 'Sert'; doughCharColor = '#f39c12'; } // Orange
+                else if (effVal <= 64) { doughChar = 'Orta'; doughCharColor = '#3498db'; } // Blue
+                else { doughChar = 'Yumuşak'; doughCharColor = '#2ecc71'; } // Green
+            }
+
+            // Badges
+            const isMilky = milkAmount > 0;
+            const isOily = oilAmount > 0;
+
+            // Liquid Summary HTML
+            const liquidSummaryHtml = `
+                <div style="font-size: 0.85rem; color: #ddd; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.05);">
+                    💧 Su: ${recipe.waterAmount || 0}g
+                    ${milkAmount > 0 ? ` · 🥛 Süt: ${milkAmount}g` : ''}
+                    ${oilAmount > 0 ? ` · 🛢️ Yağ: ${oilAmount}g` : ''}
+                </div>
+            `;
+            // --- UI LOGIC END ---
+
             return `
                     <div class="card recipe-card" style="margin-bottom: 0;">
                         <div class="card-header" style="display: flex; justify-content: space-between; align-items: start;">
                             <div>
-                                <h3 style="margin-bottom: 4px;">${recipe.name}</h3>
-                                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
-                                     <span class="badge" style="background: rgba(255,255,255,0.1); font-weight: normal;">${flour ? flour.name : 'Un?'}</span>
+                                <h3 style="margin-bottom: 4px; display: flex; align-items: center; gap: 6px;">
+                                    ${recipe.name}
+                                    ${isMilky ? '<span style="font-size: 0.7em; background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px;">🥛 Sütlü</span>' : ''}
+                                    ${isOily ? '<span style="font-size: 0.7em; background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px;">🛢️ Yağlı</span>' : ''}
+                                </h3>
+                                <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+                                     <span class="badge" style="background: rgba(255,255,255,0.1); font-weight: normal;">${flourName}</span>
+                                     <span class="badge" style="background: ${doughCharColor}; color: white;">🧠 Hamur: ${doughChar}</span>
                                      ${recipe.isFavorite ? '<span class="badge" style="background: gold; color: black;">★ Favori</span>' : ''}
                                 </div>
                             </div>
                             <div style="text-align: right;">
-                                <span class="badge badge-success">%${recipe.hydration} Su</span>
-                                ${recipe.effectiveHydration ? `<div style="font-size: 0.8rem; color: var(--color-primary); font-weight:bold; margin-top:2px;">%${recipe.effectiveHydration} Efektif</div>` : ''}
+                                <span class="badge badge-success" style="font-size: 0.9em;">${hydBadgeText}</span>
                                 <div style="font-size: 0.8rem; color: var(--color-text-secondary); margin-top: 4px;">Temp: ${recipe.roomTemp || '-'}°C</div>
                             </div>
                         </div>
                         
                         <div class="card-body" style="margin-top: 12px;">
+                            ${liquidSummaryHtml}
                             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.9rem; color: var(--color-text-secondary); background: rgba(0,0,0,0.2); padding: 8px; border-radius: 8px;">
                                 <span>⚖️ Toplam: ${totalWeight}g</span>
                                 <span>💵 Maliyet: ${totalCost.toFixed(2)}₺</span>
@@ -101,6 +181,9 @@
                         </div>
 
                         <div class="card-actions" style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.05); display: flex; justify-content: flex-end; gap: 10px;">
+                             <button class="btn btn-primary btn-start-production" data-id="${recipe.id}" style="font-size: 0.9rem; padding: 6px 12px; background: var(--color-success); border-color: var(--color-success);">
+                                <ion-icon name="play-outline" style="margin-right:4px; vertical-align:middle;"></ion-icon> Üretime Al
+                             </button>
                              <button class="btn btn-primary btn-edit-recipe" data-id="${recipe.id}" style="font-size: 0.9rem; padding: 6px 12px;">
                                 Düzenle
                              </button>
@@ -154,23 +237,17 @@
                             <div class="form-group" style="background: rgba(252, 163, 17, 0.05); padding: 12px; border-radius: 8px; border: 1px solid rgba(252, 163, 17, 0.2);">
                                 <label class="form-label" style="color: var(--color-primary);">Ana Bileşenler</label>
                                 
-                                <!-- Flour -->
+                                <!-- Flours (Multi-Select) -->
                                 <div style="margin-bottom: 12px;">
-                                    <label style="font-size: 0.8rem; color: var(--color-text-secondary);">Un Seçimi</label>
-                                    <select class="form-control" id="recipe-flour" required>
-                                        <option value="" disabled selected>Un seçiniz...</option>
-                                        ${ingredients.filter(i => i.type === 'flour').map(i => `
-                                            <option value="${i.id}" data-price="${i.price}" data-pkg="${i.packageSize}">${i.name} (Prot: %${i.protein || '?'})</option>
-                                        `).join('')}
-                                    </select>
-                                    <div style="display: flex; align-items: center; gap: 10px; margin-top: 5px;">
-                                        <input type="number" class="form-control" id="flour-amount" placeholder="Miktar" value="1000" style="flex: 1;">
-                                        <span style="color: var(--color-text-secondary);">gr</span>
-                                    </div>
+                                    <label style="font-size: 0.8rem; color: var(--color-text-secondary);">Un Seçimi (Mix Yapabilirsiniz)</label>
+                                    <div id="flour-container"></div>
+                                    <button type="button" class="btn" id="btn-add-flour" style="background: rgba(255,255,255,0.05); margin-top: 5px; font-size: 0.8rem; width:auto; padding: 4px 10px;">
+                                        <ion-icon name="add-circle-outline" style="margin-right: 5px;"></ion-icon> Un Ekle
+                                    </button>
                                 </div>
 
                                 <!-- Water (Fixed) -->
-                                <div>
+                                <div style="margin-top: 15px;">
                                     <label style="font-size: 0.8rem; color: var(--color-text-secondary); display:flex; align-items:center; gap:5px;">
                                         <ion-icon name="water-outline"></ion-icon> Su Miktarı
                                     </label>
@@ -190,7 +267,16 @@
                                 </button>
                             </div>
 
-                            <!-- Process Info (Shelf Life, Room Temp) -->
+                            <!-- Production Steps -->
+                            <div class="form-group">
+                                <label class="form-label">Üretim Adımları</label>
+                                <div id="production-steps-container"></div>
+                                <button type="button" class="btn" id="btn-add-step" style="background: rgba(255,255,255,0.05); margin-top: 8px; font-size: 0.9rem;">
+                                    <ion-icon name="list-outline" style="margin-right: 5px;"></ion-icon> Adım Ekle
+                                </button>
+                            </div>
+
+                            <!-- Process Info -->
                             <div class="form-group">
                                 <div class="form-row" style="display: flex; gap: 10px;">
                                     <div style="flex: 1;">
@@ -242,13 +328,13 @@
                                 
                                 <!-- Hydration Breakdown -->
                                 <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); text-align: right;">
-                                    <div id="calc-hydration-water" style="font-size: 0.9rem;">Hidrasyon (Su): %0.0</div>
+                                    <div id="calc-hydration-base" style="font-size: 0.9rem;">Hidrasyon (Su): %0.0</div>
                                     <div id="calc-hydration-milk" style="font-size: 0.9rem; color: #aaa;">Süt Katkısı: +%0.0</div>
                                     <div id="calc-hydration-effective" style="font-size: 1rem; color: var(--color-primary); font-weight: bold; margin-top: 2px;">Efektif Hidrasyon: %0.0</div>
                                 </div>
 
                                 <div style="font-size: 0.7rem; color: #888; text-align: center; margin-top: 8px; font-style: italic;">
-                                    ℹ️ Efektif hidrasyon, su + süt su eşdeğerine göre hesaplanır.<br>Yağ hidrasyona dahil edilmez, yalnızca dokuya etki eder.
+                                    ℹ️ Efektif hidrasyon, su + süt su eşdeğerine göre hesaplanır.<br>Birden fazla un varsa toplam un ağırlığı baz alınır.
                                 </div>
                             </div>
 
@@ -263,11 +349,12 @@
             const modal = document.getElementById('modal-recipe');
             const title = document.getElementById('modal-title');
             const editIdInput = document.getElementById('edit-recipe-id');
-            const container = document.getElementById('ingredients-container');
+            const ingContainer = document.getElementById('ingredients-container');
+            const flourContainer = document.getElementById('flour-container');
+            const stepsContainer = document.getElementById('production-steps-container');
+
             const formInputs = {
                 name: document.getElementById('recipe-name'),
-                flour: document.getElementById('recipe-flour'),
-                flourAmount: document.getElementById('flour-amount'),
                 waterAmount: document.getElementById('water-amount'),
                 shelfLife: document.getElementById('shelf-life'),
                 roomTemp: document.getElementById('room-temp'),
@@ -276,10 +363,13 @@
             };
 
             // Reset
-            container.innerHTML = '';
+            ingContainer.innerHTML = '';
+            flourContainer.innerHTML = '';
+            stepsContainer.innerHTML = '';
             editIdInput.value = '';
             title.textContent = 'Yeni Reçete';
-            for (let k in formInputs) formInputs[k].value = (k === 'flourAmount' ? 1000 : (k === 'waterAmount' ? 650 : (k === 'ballWeight' ? 250 : '')));
+
+            for (let k in formInputs) formInputs[k].value = (k === 'waterAmount' ? 650 : (k === 'ballWeight' ? 250 : ''));
 
             if (editId) {
                 // Load existing
@@ -288,25 +378,39 @@
                     title.textContent = 'Reçeteyi Düzenle';
                     editIdInput.value = editId;
                     formInputs.name.value = recipe.name;
-                    formInputs.flour.value = recipe.flourId;
-                    formInputs.flourAmount.value = recipe.flourAmount || 1000; // Handling migration
-                    formInputs.waterAmount.value = recipe.waterAmount || (recipe.ingredients.find(i => i.type === 'water')?.amount) || 650; // Try to find old water or default
+                    formInputs.waterAmount.value = recipe.waterAmount || 650;
                     formInputs.shelfLife.value = recipe.shelfLife || '';
                     formInputs.roomTemp.value = recipe.roomTemp || '';
                     formInputs.ballWeight.value = recipe.ballWeight || 250;
                     formInputs.notes.value = recipe.notes || '';
 
-                    // Populate Ingredients (excluding base flour/water if they were there in old format)
+                    // FLOUR MIGRATION CHECK
+                    if (recipe.flours && recipe.flours.length > 0) {
+                        recipe.flours.forEach(f => this.addFlourRow(f.id, f.amount));
+                    } else if (recipe.flourId) {
+                        // Backward compatibility
+                        this.addFlourRow(recipe.flourId, recipe.flourAmount || 1000);
+                    } else {
+                        this.addFlourRow(null, 1000);
+                    }
+
+                    // Populate Ingredients
                     if (recipe.ingredients) {
                         recipe.ingredients.forEach(i => {
-                            if (!i.isBase && i.type !== 'water') { // Skip old water/flour entries from dynamic list
+                            if (!i.isBase && i.type !== 'water') {
                                 this.addIngredientRow(null, null, i.amount, i.id);
                             }
                         });
                     }
+
+                    // Populate Steps
+                    if (recipe.productionSteps) {
+                        recipe.productionSteps.forEach(s => this.addStepRow(s));
+                    }
                 }
             } else {
-                // Default extras for new
+                // Default for new
+                this.addFlourRow(null, 1000); // 1 default flour row
                 this.addIngredientRow('salt', 'Tuz', 20);
                 this.addIngredientRow('yeast', 'Maya', 2);
             }
@@ -316,36 +420,41 @@
         },
 
         updateCalculations() {
-            const flourSelect = document.getElementById('recipe-flour');
-            const flourAmount = parseFloat(document.getElementById('flour-amount')?.value) || 0;
-            const waterAmount = parseFloat(document.getElementById('water-amount')?.value) || 0;
             const ballWeight = parseFloat(document.getElementById('ball-weight')?.value) || 250;
-
             const normalize = window.App.Utils.normalizeAmount;
+            const waterAmount = parseFloat(document.getElementById('water-amount')?.value) || 0;
 
-            // Total weight assumes inputs are in grams/ml
-            let totalWeight = flourAmount + waterAmount;
+            let totalFlourAmount = 0;
             let totalCost = 0;
 
-            // Flour Cost
-            if (flourSelect.selectedIndex > 0) {
-                const opt = flourSelect.options[flourSelect.selectedIndex];
-                const price = parseFloat(opt.dataset.price) || 0;
-                const pkgSize = parseFloat(opt.dataset.pkg) || 0;
+            // 1. Calculate Flour Totals
+            document.querySelectorAll('.flour-row').forEach(row => {
+                const select = row.querySelector('.flour-select');
+                const amtInput = row.querySelector('.flour-amount');
+                const amt = parseFloat(amtInput.value) || 0;
 
-                const flourId = flourSelect.value;
-                const flourItem = ingredients.find(i => i.id === flourId);
+                totalFlourAmount += amt;
 
-                if (flourItem && pkgSize > 0) {
-                    const unit = flourItem.packageUnit; // Strict
-                    if (unit) {
-                        const pkgWeight = normalize(pkgSize, unit);
-                        totalCost += (pkgWeight > 0) ? ((price / pkgWeight) * flourAmount) : 0;
+                if (select.value) {
+                    // Cost Logic
+                    const flourId = select.value;
+                    const flourItem = ingredients.find(i => i.id === flourId);
+                    if (flourItem) {
+                        const unit = flourItem.packageUnit;
+                        const price = flourItem.price;
+                        const pkgSize = flourItem.packageSize;
+
+                        if (unit && price && pkgSize) {
+                            const pkgWeight = normalize(pkgSize, unit);
+                            totalCost += (pkgWeight > 0) ? ((price / pkgWeight) * amt) : 0;
+                        }
                     }
                 }
-            }
+            });
 
-            // Extras Cost & Milk Detection
+            let totalWeight = totalFlourAmount + waterAmount;
+
+            // 2. Extras (Ingredients)
             let milkWaterEq = 0;
 
             document.querySelectorAll('.ingredient-row').forEach(row => {
@@ -359,7 +468,7 @@
                     if (item) {
                         // Cost Logic
                         if (item.price && item.packageSize) {
-                            const unit = item.packageUnit; // Strict
+                            const unit = item.packageUnit;
                             if (unit) {
                                 const pkgWeight = normalize(item.packageSize, unit);
                                 totalCost += (pkgWeight > 0) ? ((item.price / pkgWeight) * amount) : 0;
@@ -367,8 +476,6 @@
                         }
 
                         // Hydration Logic: Detect Milk
-                        // Assuming detection by name for now as per plan, or type if available.
-                        // Ideally we should add 'type: milk' to inventory, but checking name is safer for existing data.
                         const nameLower = item.name.toLowerCase();
                         if (nameLower.includes('süt') || nameLower.includes('milk') || (item.type === 'milk')) {
                             // Süt Kuralı: %85 Su
@@ -378,10 +485,10 @@
                 }
             });
 
-            // Hydration Calculations
-            const waterHydration = flourAmount > 0 ? ((waterAmount / flourAmount) * 100) : 0;
-            const milkContribution = flourAmount > 0 ? ((milkWaterEq / flourAmount) * 100) : 0;
-            const effectiveHydration = waterHydration + milkContribution;
+            // 3. Hydration Stats
+            const hydration = totalFlourAmount > 0 ? ((waterAmount / totalFlourAmount) * 100) : 0;
+            const milkContribution = totalFlourAmount > 0 ? ((milkWaterEq / totalFlourAmount) * 100) : 0;
+            const effectiveHydration = totalFlourAmount > 0 ? (((waterAmount + milkWaterEq) / totalFlourAmount) * 100) : 0;
 
             const yieldCount = Math.floor(totalWeight / ballWeight);
             const unitCost = yieldCount > 0 ? (totalCost / yieldCount) : 0;
@@ -392,10 +499,50 @@
             document.getElementById('calc-yield-count').textContent = yieldCount;
 
             // Hydration UI Update
-            document.getElementById('calc-hydration-water').textContent = `Hidrasyon (Su): %${waterHydration.toFixed(1)}`;
+            document.getElementById('calc-hydration-base').textContent = `Hidrasyon (Su): %${hydration.toFixed(1)}`;
             document.getElementById('calc-hydration-milk').textContent = `Süt Katkısı: +%${milkContribution.toFixed(1)}`;
             const effEl = document.getElementById('calc-hydration-effective');
             effEl.textContent = `Efektif Hidrasyon: %${effectiveHydration.toFixed(1)}`;
+        },
+
+        addFlourRow(preId = null, preAmount = '') {
+            const container = document.getElementById('flour-container');
+            const div = document.createElement('div');
+            div.className = 'flour-row';
+            div.style.cssText = 'display: flex; gap: 10px; margin-bottom: 5px; align-items: center;';
+
+            // Filter flours
+            const options = ingredients.filter(i => i.type === 'flour').map(i => {
+                return `<option value="${i.id}" ${i.id === preId ? 'selected' : ''}>${i.name} (Prot: %${i.protein || '?'})</option>`;
+            }).join('');
+
+            div.innerHTML = `
+                <select class="form-control flour-select" style="flex: 2;">
+                    <option value="" disabled ${!preId ? 'selected' : ''}>Un seçiniz...</option>
+                    ${options}
+                </select>
+                <div style="display:flex; align-items:center; gap:5px; flex:1;">
+                     <input type="number" class="form-control flour-amount" placeholder="gr" value="${preAmount}" style="width:100%;">
+                     <span style="font-size:0.7rem; color:#888;">gr</span>
+                </div>
+                <button type="button" class="icon-btn btn-remove-flour" style="color: var(--color-danger);"><ion-icon name="close-circle-outline"></ion-icon></button>
+            `;
+
+            container.appendChild(div);
+
+            const self = this;
+            div.querySelector('.flour-select').addEventListener('change', () => self.updateCalculations());
+            div.querySelector('.flour-amount').addEventListener('input', () => self.updateCalculations());
+            div.querySelector('.btn-remove-flour').onclick = () => {
+                // Don't allow removing last flour row to prevent empty state issues (optional but good UX)
+                if (document.querySelectorAll('.flour-row').length > 1) {
+                    div.remove();
+                    self.updateCalculations();
+                } else {
+                    alert('En az bir un çeşidi girmelisiniz.');
+                }
+            };
+            self.updateCalculations();
         },
 
         addIngredientRow(preSelectedType = null, preSelectedName = null, preValue = '', preId = null) {
@@ -430,6 +577,35 @@
             self.updateCalculations();
         },
 
+        addStepRow(step = null) {
+            const container = document.getElementById('production-steps-container');
+            const div = document.createElement('div');
+            div.className = 'step-row';
+            div.dataset.id = step ? step.id : '';
+            div.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center; background: rgba(0,0,0,0.2); padding: 8px; border-radius: 6px;';
+
+            const typeOptions = [
+                { val: 'knead', label: 'Yoğur' },
+                { val: 'rest', label: 'Dinlendir' },
+                { val: 'fold', label: 'Katla' },
+                { val: 'ferment', label: 'Mayalandır' },
+                { val: 'other', label: 'Diğer' }
+            ].map(o => `<option value="${o.val}" ${step && step.type === o.val ? 'selected' : ''}>${o.label}</option>`).join('');
+
+            div.innerHTML = `
+                <select class="form-control step-type" style="flex: 1; min-width: 80px; font-size: 0.85rem;">${typeOptions}</select>
+                <input type="text" class="form-control step-title" placeholder="Başlık (Opsiyonel)" value="${step ? step.title : ''}" style="flex: 2; font-size: 0.85rem;">
+                <div style="display:flex; align-items:center; gap:4px; flex: 1;">
+                    <input type="number" class="form-control step-duration" placeholder="Dk" value="${step ? step.durationMin : ''}" style="width: 100%; font-size: 0.85rem;">
+                    <span style="font-size:0.7rem; color:#888;">dk</span>
+                </div>
+                <button type="button" class="icon-btn btn-remove-step" style="color: var(--color-danger);"><ion-icon name="trash-outline"></ion-icon></button>
+            `;
+
+            div.querySelector('.btn-remove-step').onclick = () => div.remove();
+            container.appendChild(div);
+        },
+
         afterRender() {
             const self = this;
             const modal = document.getElementById('modal-recipe');
@@ -437,21 +613,53 @@
             const btnClose = document.getElementById('btn-close-modal');
             const form = document.getElementById('form-recipe');
             const btnAddRow = document.getElementById('btn-add-row');
+            const btnAddStep = document.getElementById('btn-add-step');
+            const btnAddFlour = document.getElementById('btn-add-flour');
 
             // Input listeners for calc
-            ['flour-amount', 'water-amount', 'recipe-flour', 'ball-weight'].forEach(id => {
+            ['water-amount', 'ball-weight'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.addEventListener('input', () => self.updateCalculations());
-                if (el && el.tagName === 'SELECT') el.addEventListener('change', () => self.updateCalculations());
             });
 
             if (btnNew) btnNew.onclick = async () => await self.openModal();
             if (btnClose) btnClose.onclick = () => modal.classList.remove('open');
             if (btnAddRow) btnAddRow.onclick = () => self.addIngredientRow();
+            if (btnAddStep) btnAddStep.onclick = () => self.addStepRow();
+            if (btnAddFlour) btnAddFlour.onclick = () => self.addFlourRow();
 
-            // Edit Buttons
+            // Edit Handler
             document.querySelectorAll('.btn-edit-recipe').forEach(btn => {
                 btn.onclick = async () => await self.openModal(btn.dataset.id);
+            });
+
+            // Start Production Handler
+            document.querySelectorAll('.btn-start-production').forEach(btn => {
+                btn.onclick = async () => {
+                    const rId = btn.dataset.id;
+                    const recipe = recipes.find(r => r.id === rId);
+                    if (!recipe) return;
+
+                    if (!recipe.productionSteps || recipe.productionSteps.length === 0) {
+                        window.App.showConfirm('Adım Yok', 'Bu reçetede tanımlı üretim adımı yok. Önce adımları tanımlamak ister misiniz?', async () => {
+                            await self.openModal(rId);
+                        });
+                        return;
+                    }
+
+                    if (confirm(`"${recipe.name}" için üretim süreci başlatılsın mı?`)) {
+                        const processData = {
+                            recipeId: recipe.id,
+                            recipeName: recipe.name,
+                            steps: JSON.parse(JSON.stringify(recipe.productionSteps)), // Deep copy 
+                            currentStepIndex: 0,
+                            status: 'active',
+                            startedAt: Date.now()
+                        };
+                        localStorage.setItem('active_process', JSON.stringify(processData));
+                        window.App.navigateTo('process');
+                    }
+                };
             });
 
             // Form Submit
@@ -461,15 +669,25 @@
 
                     const editId = document.getElementById('edit-recipe-id').value;
                     const name = document.getElementById('recipe-name').value;
-                    const flourId = document.getElementById('recipe-flour').value;
-                    const flourAmount = parseFloat(document.getElementById('flour-amount').value);
                     const waterAmount = parseFloat(document.getElementById('water-amount').value);
                     const ballWeight = parseFloat(document.getElementById('ball-weight').value);
                     const shelfLife = document.getElementById('shelf-life').value;
                     const roomTemp = document.getElementById('room-temp').value;
                     const notes = document.getElementById('recipe-notes').value;
 
-                    if (!flourId) { alert('Un seçiniz'); return; }
+                    // Gather Flours
+                    const flours = [];
+                    let totalFlourAmount = 0;
+                    document.querySelectorAll('.flour-row').forEach(row => {
+                        const fId = row.querySelector('.flour-select').value;
+                        const fAmt = parseFloat(row.querySelector('.flour-amount').value) || 0;
+                        if (fId && fAmt > 0) {
+                            flours.push({ id: fId, amount: fAmt });
+                            totalFlourAmount += fAmt;
+                        }
+                    });
+
+                    if (flours.length === 0) { alert('En az bir un seçmelisiniz.'); return; }
 
                     const extraIngredients = [];
                     document.querySelectorAll('.ingredient-row').forEach(row => {
@@ -482,9 +700,9 @@
 
                     // Calculated totals
                     let milkWaterEq = 0;
-                    let totalWeight = flourAmount + waterAmount; // Restored initialization
+                    let totalWeight = totalFlourAmount + waterAmount;
+
                     extraIngredients.forEach(i => {
-                        // Re-find to check if it is milk
                         const item = ingredients.find(inv => inv.id === i.id);
                         if (item) {
                             const nameLower = item.name.toLowerCase();
@@ -495,26 +713,47 @@
                         totalWeight += i.amount;
                     });
 
-                    const hydration = flourAmount > 0 ? ((waterAmount / flourAmount) * 100).toFixed(1) : 0;
-                    const effectiveHydration = flourAmount > 0 ? (((waterAmount + milkWaterEq) / flourAmount) * 100).toFixed(1) : 0;
+                    const hydration = totalFlourAmount > 0 ? ((waterAmount / totalFlourAmount) * 100).toFixed(1) : 0;
+                    const effectiveHydration = totalFlourAmount > 0 ? (((waterAmount + milkWaterEq) / totalFlourAmount) * 100).toFixed(1) : 0;
 
                     const recipeData = {
                         id: editId || Date.now().toString(),
                         name,
-                        flourId,
-                        flourAmount, // Storing explicitly now
-                        waterAmount, // Storing explicitly now
+                        // Legacy single flour fields for list view compatibility (using primary flour)
+                        flourId: flours[0].id,
+                        flourAmount: totalFlourAmount,
+
+                        flours: flours, // NEW MULTI FLOUR FIELD
+
+                        waterAmount,
                         totalWeight,
                         hydration,
-                        effectiveHydration, // New Field
+                        effectiveHydration,
 
                         ballWeight,
                         shelfLife,
                         roomTemp,
                         notes,
-                        ingredients: extraIngredients, // Only extras now
+                        ingredients: extraIngredients,
                         createdAt: editId ? (recipes.find(r => r.id === editId).createdAt) : new Date().toISOString(),
-                        isFavorite: editId ? (recipes.find(r => r.id === editId).isFavorite) : false
+                        isFavorite: editId ? (recipes.find(r => r.id === editId).isFavorite) : false,
+                        productionSteps: (() => {
+                            const steps = [];
+                            document.querySelectorAll('.step-row').forEach(row => {
+                                const type = row.querySelector('.step-type').value;
+                                const title = row.querySelector('.step-title').value;
+                                const duration = parseInt(row.querySelector('.step-duration').value) || 0;
+                                steps.push({
+                                    id: row.dataset.id || `step-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+                                    type,
+                                    title: title || (type === 'knead' ? 'Yoğurma' : (type === 'rest' ? 'Dinlendirme' : type)),
+                                    durationMin: duration,
+                                    status: 'idle',
+                                    startedAt: null
+                                });
+                            });
+                            return steps;
+                        })()
                     };
 
                     if (editId) {
@@ -524,9 +763,9 @@
                     }
 
                     modal.classList.remove('open');
-                    const content = await window.App.Recipes.render(); // Re-render self to show changes
+                    const content = await window.App.Recipes.render();
                     document.getElementById('main-view').innerHTML = content;
-                    self.afterRender(); // Re-bind
+                    self.afterRender();
                 };
             }
 
