@@ -9,15 +9,15 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/hamur-odasi/css/style.css">
+    <link rel="stylesheet" href="css/style.css">
 
     <!-- Ionicons -->
     <script type="module" src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.esm.js"></script>
     <script nomodule src="https://unpkg.com/ionicons@7.1.0/dist/ionicons/ionicons.js"></script>
 
     <!-- PWA -->
-    <link rel="manifest" href="/hamur-odasi/manifest.json">
-    <link rel="apple-touch-icon" href="/hamur-odasi/icon-192.png">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="icon-192.png">
     <meta name="theme-color" content="#121212">
 </head>
 
@@ -93,17 +93,17 @@
     <script>window.App = window.App || {};</script>
 
     <!-- Scripts (Order Matters!) -->
-    <script src="/hamur-odasi/utils.js"></script>
-    <script src="/hamur-odasi/storage.js"></script>
-    <script src="/hamur-odasi/inventory.js"></script>
-    <script src="/hamur-odasi/recipes.js"></script>
-    <script src="/hamur-odasi/production.js"></script>
-    <script src="/hamur-odasi/showcase.js"></script>
-    <script src="/hamur-odasi/app.js"></script>
+    <script src="utils.js"></script>
+    <script src="storage.js"></script>
+    <script src="inventory.js"></script>
+    <script src="recipes.js"></script>
+    <script src="production.js"></script>
+    <script src="showcase.js"></script>
+    <script src="app.js"></script>
 
     <script>
         if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.register("/hamur-odasi/sw.js", { scope: "/hamur-odasi/" })
+            navigator.serviceWorker.register("sw.js")
                 .then(() => console.log("Service Worker registered"))
                 .catch(err => console.error("Service Worker registration failed", err));
         }
