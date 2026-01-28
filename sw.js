@@ -1,4 +1,4 @@
-const CACHE_NAME = "hamur-odasi-v4";
+const CACHE_NAME = "hamur-odasi-v7";
 const APP_SHELL = [
     "/hamur-odasi/",
     "/hamur-odasi/index.html"
