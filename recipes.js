@@ -84,6 +84,7 @@
                             </div>
                             <div style="text-align: right;">
                                 <span class="badge badge-success">%${recipe.hydration} Su</span>
+                                ${recipe.effectiveHydration ? `<div style="font-size: 0.8rem; color: var(--color-primary); font-weight:bold; margin-top:2px;">%${recipe.effectiveHydration} Efektif</div>` : ''}
                                 <div style="font-size: 0.8rem; color: var(--color-text-secondary); margin-top: 4px;">Temp: ${recipe.roomTemp || '-'}°C</div>
                             </div>
                         </div>
@@ -238,11 +239,16 @@
                                     <span style="color: var(--color-primary);">Birim (Top) Maliyet:</span>
                                     <span id="calc-unit-cost" style="color: var(--color-primary); font-weight: bold;">0.00 ₺</span>
                                 </div>
-                                <div style="text-align: right; margin-top: 5px;">
-                                    <span id="calc-hydration" style="font-size: 0.8rem; opacity: 0.7;">Hidrasyon: %0</span>
+                                
+                                <!-- Hydration Breakdown -->
+                                <div style="margin-top: 12px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.1); text-align: right;">
+                                    <div id="calc-hydration-water" style="font-size: 0.9rem;">Hidrasyon (Su): %0.0</div>
+                                    <div id="calc-hydration-milk" style="font-size: 0.9rem; color: #aaa;">Süt Katkısı: +%0.0</div>
+                                    <div id="calc-hydration-effective" style="font-size: 1rem; color: var(--color-primary); font-weight: bold; margin-top: 2px;">Efektif Hidrasyon: %0.0</div>
                                 </div>
-                                <div style="font-size: 0.7rem; color: #888; text-align: center; margin-top: 5px; font-style: italic;">
-                                    ℹ️ Hidrasyon yalnızca su / un oranına göre hesaplanır.<br>Süt, yağ ve diğer sıvılar bu orana dahil değildir.
+
+                                <div style="font-size: 0.7rem; color: #888; text-align: center; margin-top: 8px; font-style: italic;">
+                                    ℹ️ Efektif hidrasyon, su + süt su eşdeğerine göre hesaplanır.<br>Yağ hidrasyona dahil edilmez, yalnızca dokuya etki eder.
                                 </div>
                             </div>
 
@@ -339,7 +345,9 @@
                 }
             }
 
-            // Extras Cost
+            // Extras Cost & Milk Detection
+            let milkWaterEq = 0;
+
             document.querySelectorAll('.ingredient-row').forEach(row => {
                 const select = row.querySelector('.ing-select');
                 const amount = parseFloat(row.querySelector('.ing-amount').value) || 0;
@@ -348,29 +356,46 @@
 
                 if (select.value) {
                     const item = ingredients.find(i => i.id === select.value);
-                    if (item && item.price && item.packageSize) {
-                        const unit = item.packageUnit; // Strict
-                        if (unit) {
-                            const pkgWeight = normalize(item.packageSize, unit);
-                            totalCost += (pkgWeight > 0) ? ((item.price / pkgWeight) * amount) : 0;
+                    if (item) {
+                        // Cost Logic
+                        if (item.price && item.packageSize) {
+                            const unit = item.packageUnit; // Strict
+                            if (unit) {
+                                const pkgWeight = normalize(item.packageSize, unit);
+                                totalCost += (pkgWeight > 0) ? ((item.price / pkgWeight) * amount) : 0;
+                            }
+                        }
+
+                        // Hydration Logic: Detect Milk
+                        // Assuming detection by name for now as per plan, or type if available.
+                        // Ideally we should add 'type: milk' to inventory, but checking name is safer for existing data.
+                        const nameLower = item.name.toLowerCase();
+                        if (nameLower.includes('süt') || nameLower.includes('milk') || (item.type === 'milk')) {
+                            // Süt Kuralı: %85 Su
+                            milkWaterEq += (amount * 0.85);
                         }
                     }
                 }
             });
 
-            // Hydration = Water / Flour
-            // We only count the fixed water input for simple hydration logic, or should we include liquids from extras?
-            // User requested fixed water input, so usually that is the main hydration source.
-            // Let's stick to Water Input / Flour for now.
-            const hydration = flourAmount > 0 ? ((waterAmount / flourAmount) * 100).toFixed(1) : 0;
+            // Hydration Calculations
+            const waterHydration = flourAmount > 0 ? ((waterAmount / flourAmount) * 100) : 0;
+            const milkContribution = flourAmount > 0 ? ((milkWaterEq / flourAmount) * 100) : 0;
+            const effectiveHydration = waterHydration + milkContribution;
+
             const yieldCount = Math.floor(totalWeight / ballWeight);
             const unitCost = yieldCount > 0 ? (totalCost / yieldCount) : 0;
 
             document.getElementById('calc-total-weight').textContent = `${totalWeight} g`;
-            document.getElementById('calc-hydration').textContent = `Hidrasyon: %${hydration}`;
             document.getElementById('calc-total-cost').textContent = `${totalCost.toFixed(2)} ₺`;
-            document.getElementById('calc-yield-count').textContent = yieldCount;
             document.getElementById('calc-unit-cost').textContent = `${unitCost.toFixed(2)} ₺`;
+            document.getElementById('calc-yield-count').textContent = yieldCount;
+
+            // Hydration UI Update
+            document.getElementById('calc-hydration-water').textContent = `Hidrasyon (Su): %${waterHydration.toFixed(1)}`;
+            document.getElementById('calc-hydration-milk').textContent = `Süt Katkısı: +%${milkContribution.toFixed(1)}`;
+            const effEl = document.getElementById('calc-hydration-effective');
+            effEl.textContent = `Efektif Hidrasyon: %${effectiveHydration.toFixed(1)}`;
         },
 
         addIngredientRow(preSelectedType = null, preSelectedName = null, preValue = '', preId = null) {
@@ -456,9 +481,21 @@
                     });
 
                     // Calculated totals
+                    let milkWaterEq = 0;
+                    extraIngredients.forEach(i => {
+                        // Re-find to check if it is milk
+                        const item = ingredients.find(inv => inv.id === i.id);
+                        if (item) {
+                            const nameLower = item.name.toLowerCase();
+                            if (nameLower.includes('süt') || nameLower.includes('milk') || (item.type === 'milk')) {
+                                milkWaterEq += (i.amount * 0.85);
+                            }
+                        }
+                        totalWeight += i.amount;
+                    });
+
                     const hydration = flourAmount > 0 ? ((waterAmount / flourAmount) * 100).toFixed(1) : 0;
-                    let totalWeight = flourAmount + waterAmount;
-                    extraIngredients.forEach(i => totalWeight += i.amount);
+                    const effectiveHydration = flourAmount > 0 ? (((waterAmount + milkWaterEq) / flourAmount) * 100).toFixed(1) : 0;
 
                     const recipeData = {
                         id: editId || Date.now().toString(),
@@ -468,6 +505,8 @@
                         waterAmount, // Storing explicitly now
                         totalWeight,
                         hydration,
+                        effectiveHydration, // New Field
+
                         ballWeight,
                         shelfLife,
                         roomTemp,
