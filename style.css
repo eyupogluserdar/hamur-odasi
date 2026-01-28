@@ -1,0 +1,386 @@
+/*
+* HAMUR ODASI - Design System
+*/
+
+:root {
+    /* Color Palette - Dark (Default) */
+    --color-bg-main: #121212;
+    --color-bg-card: #1E1E1E;
+    --color-bg-nav: #1E1E1E;
+    --color-text-primary: #FFFFFF;
+    --color-text-secondary: #AAAAAA;
+
+    --color-primary: #FCA311;
+    /* Warm Gold/Orange for bread/dough feel */
+    --color-primary-dark: #D48600;
+    --color-accent: #E5E5E5;
+
+    --color-success: #4CAF50;
+    --color-warning: #FFC107;
+    --color-danger: #FF5252;
+
+    --border-radius-sm: 8px;
+    --border-radius-md: 12px;
+    --border-radius-lg: 20px;
+    --border-radius-pill: 50px;
+
+    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.2);
+    --shadow-glow: 0 0 15px rgba(252, 163, 17, 0.3);
+
+    --header-height: 60px;
+    --nav-height: 70px;
+    --safe-area-bottom: env(safe-area-inset-bottom, 20px);
+    --shadow-card: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.spin {
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+[data-theme="light"] {
+    --color-bg-main: #F5F5F5;
+    --color-bg-card: #FFFFFF;
+    --color-bg-nav: #FFFFFF;
+    --color-text-primary: #333333;
+    --color-text-secondary: #666666;
+
+    --color-primary: #FCA311;
+    --color-accent: #333333;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    -webkit-tap-highlight-color: transparent;
+}
+
+body {
+    font-family: 'Outfit', sans-serif;
+    background-color: var(--color-bg-main);
+    color: var(--color-text-primary);
+    overflow: hidden;
+    /* Prevent body scroll, use container */
+    height: 100vh;
+    font-size: 18px;
+    /* Increased for mobile "closer" feel */
+}
+
+/* Container */
+.app-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* Header */
+.app-header {
+    height: var(--header-height);
+    background-color: var(--color-bg-main);
+    /* Transparent feel, blends with body */
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.header-content {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.app-header h1 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: var(--color-text-primary);
+}
+
+.icon-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-primary);
+    font-size: 1.5rem;
+    cursor: pointer;
+    padding: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Main View */
+.main-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    padding-bottom: calc(var(--nav-height) + 20px);
+    /* Space for bottom nav */
+}
+
+/* Bottom Nav */
+.bottom-nav {
+    height: var(--nav-height);
+    background-color: var(--color-bg-nav);
+    display: flex;
+    justify-content: space-around;
+    align-items: center;
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 -5px 20px rgba(0, 0, 0, 0.3);
+    padding-bottom: env(safe-area-inset-bottom);
+    z-index: 1000;
+}
+
+.nav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    color: var(--color-text-secondary);
+    font-size: 0.75rem;
+    gap: 4px;
+    flex: 1;
+    height: 100%;
+    transition: color 0.3s ease;
+}
+
+.nav-item ion-icon {
+    font-size: 1.5rem;
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.nav-item.active {
+    color: var(--color-primary);
+}
+
+.nav-item.active ion-icon {
+    transform: translateY(-2px);
+}
+
+/* FAB Button */
+.nav-item-fab-wrapper {
+    position: relative;
+    top: -20px;
+    width: 60px;
+    height: 60px;
+}
+
+.fab-btn {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
+    border: none;
+    color: #000;
+    /* Contrast text on gold */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    box-shadow: var(--shadow-glow);
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+
+.fab-btn:active {
+    transform: scale(0.95);
+}
+
+/* Empty State */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 60%;
+    color: var(--color-text-secondary);
+    text-align: center;
+}
+
+.empty-state ion-icon {
+    font-size: 4rem;
+    margin-bottom: 16px;
+    opacity: 0.5;
+}
+
+/* Cards & Components */
+.card {
+    background-color: var(--color-bg-card);
+    border-radius: var(--border-radius-md);
+    padding: 16px;
+    margin-bottom: 16px;
+    box-shadow: var(--shadow-sm);
+    border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.btn {
+    padding: 14px 24px;
+    /* Larger touch target */
+    border-radius: var(--border-radius-sm);
+    border: none;
+    font-weight: 500;
+    cursor: pointer;
+    font-size: 1.1rem;
+    /* Larger text */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.btn-primary {
+    background-color: var(--color-primary);
+    color: #000;
+}
+
+.form-group {
+    margin-bottom: 16px;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--color-text-secondary);
+    font-size: 0.9rem;
+}
+
+.form-control {
+    width: 100%;
+    padding: 14px;
+    /* Larger input area */
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: var(--border-radius-sm);
+    color: var(--color-text-primary);
+    font-size: 1.1rem;
+    /* Larger text */
+    font-family: inherit;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Dropdown Option Visibility Fix */
+select.form-control option {
+    background-color: var(--color-bg-card);
+    color: var(--color-text-primary);
+}
+
+/* Module Specific - Will move eventually but safe here for start */
+.recipe-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 16px;
+}
+
+.recipe-card {
+    position: relative;
+    overflow: hidden;
+}
+
+.badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.badge-test {
+    background-color: rgba(63, 81, 181, 0.2);
+    color: #7986cb;
+}
+
+.badge-success {
+    background-color: rgba(76, 175, 80, 0.2);
+    color: #81c784;
+}
+
+/* Modal */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    /* Bottom sheet on mobile */
+    z-index: 2000;
+    backdrop-filter: blur(4px);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s;
+}
+
+.modal-overlay.open {
+    opacity: 1;
+    visibility: visible;
+}
+
+.modal-content {
+    background-color: var(--color-bg-card);
+    width: 100%;
+    max-width: 600px;
+    max-height: 90vh;
+    border-radius: 20px 20px 0 0;
+    padding: 24px;
+    overflow-y: auto;
+    transform: translateY(100%);
+    transition: transform 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.modal-overlay.open .modal-content {
+    transform: translateY(0);
+}
+
+@media (min-width: 768px) {
+    .modal-overlay {
+        align-items: center;
+    }
+
+    .modal-content {
+        border-radius: 20px;
+        width: 90%;
+    }
+}
+
+/* Inventory Styles */
+.type-btn {
+    flex: 1;
+    padding: 8px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--color-text-secondary);
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.type-btn.active {
+    background-color: var(--color-primary);
+    color: #000;
+    font-weight: 600;
+    border-color: var(--color-primary);
+}
