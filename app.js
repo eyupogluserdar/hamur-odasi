@@ -65,7 +65,8 @@
         'showcase': { title: 'Hamur Odası', module: 'Showcase' },
         'production': { title: 'Fermantasyon Takibi', module: 'Production' },
         'inventory': { title: 'Malzeme Yönetimi', module: 'Inventory' },
-        'recipes': { title: 'Reçete Odası', module: 'Recipes' }
+        'recipes': { title: 'Reçete Odası', module: 'Recipes' },
+        'process': { title: 'Üretim Takibi', module: 'Process' }
     };
 
     async function init() {
