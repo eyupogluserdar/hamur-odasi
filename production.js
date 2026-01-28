@@ -157,28 +157,79 @@
 
         async startProduction(recipeId) {
             const recipe = await window.App.Storage.getItemById('recipes', recipeId);
+            const ingredients = await window.App.Storage.getAllItems('ingredients') || [];
 
             if (!recipe) {
                 alert("Reçete bulunamadı!");
                 return;
             }
 
-            // Snapshot critical data
-            // const normalize = window.App.Utils.normalizeAmount; // Not currently needed for snapshot, can remove line
+            // --- Cost Calculation Logic (Snapshotting current prices) ---
+            let totalCost = 0;
+            const normalize = window.App.Utils.normalizeAmount;
 
-            // Calculate Snapshot Hydration
-            const flourItem = (await window.App.Storage.getAllItems('ingredients')).find(i => i.id === recipe.flourId);
+            // 1. Flour Cost
+            if (recipe.flours && recipe.flours.length > 0) {
+                recipe.flours.forEach(f => {
+                    const flourItem = ingredients.find(i => i.id === f.id);
+                    if (flourItem && flourItem.price && flourItem.packageSize) {
+                        const unit = flourItem.packageUnit;
+                        if (unit) {
+                            const packBase = normalize(flourItem.packageSize, unit);
+                            const pricePerGram = (packBase > 0) ? (flourItem.price / packBase) : 0;
+                            totalCost += (f.amount || 0) * pricePerGram;
+                        }
+                    }
+                });
+            } else if (recipe.flourId) {
+                const flour = ingredients.find(i => i.id === recipe.flourId);
+                if (flour && flour.price && flour.packageSize) {
+                    const unit = flour.packageUnit;
+                    if (unit) {
+                        const packBase = normalize(flour.packageSize, unit);
+                        const pricePerGram = (flour.price / packBase);
+                        totalCost += (recipe.flourAmount || 0) * pricePerGram;
+                    }
+                }
+            }
+
+            // 2. Ingredients Cost
+            if (recipe.ingredients) {
+                recipe.ingredients.forEach(ri => {
+                    const invItem = ingredients.find(i => i.id === ri.id);
+                    if (invItem && invItem.price && invItem.packageSize) {
+                        const unit = invItem.packageUnit;
+                        if (unit) {
+                            const packBase = normalize(invItem.packageSize, unit);
+                            const pricePerGram = (packBase > 0) ? (invItem.price / packBase) : 0;
+                            totalCost += ri.amount * pricePerGram;
+                        }
+                    }
+                });
+            }
+
+            const yieldCount = Math.floor((recipe.totalWeight || 0) / (recipe.ballWeight || 250));
+            const unitCost = yieldCount > 0 ? (totalCost / yieldCount) : 0;
+            // ------------------------------------------------------------
+
+
+            // Snapshot critical data
+            let primaryFlourSelect = null;
+            if (recipe.flours && recipe.flours.length > 0) primaryFlourSelect = ingredients.find(i => i.id === recipe.flours[0].id);
+            else if (recipe.flourId) primaryFlourSelect = ingredients.find(i => i.id === recipe.flourId);
 
             const snapshot = {
                 recipeId: recipe.id,
                 recipeName: recipe.name,
-                flourName: flourItem ? flourItem.name : 'Un',
+                flourName: primaryFlourSelect ? primaryFlourSelect.name : (recipe.flours && recipe.flours.length > 1 ? 'Mix Un' : 'Un'),
                 flourAmount: recipe.flourAmount,
                 waterAmount: recipe.waterAmount,
                 hydration: recipe.hydration,
                 totalWeight: recipe.totalWeight,
                 ballWeight: recipe.ballWeight,
-                yieldCount: Math.floor((recipe.totalWeight || 0) / (recipe.ballWeight || 250))
+                yieldCount: yieldCount,
+                totalCost: parseFloat(totalCost.toFixed(2)),
+                unitCost: parseFloat(unitCost.toFixed(2))
             };
 
             const newBatch = {
