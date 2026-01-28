@@ -1,7 +1,7 @@
-const CACHE_NAME = "hamur-odasi-v3";
+const CACHE_NAME = "hamur-odasi-v4";
 const APP_SHELL = [
-    "./",
-    "./index.html"
+    "/hamur-odasi/",
+    "/hamur-odasi/index.html"
 ];
 
 self.addEventListener("install", event => {
@@ -34,7 +34,7 @@ self.addEventListener("fetch", event => {
                 });
                 return response;
             }).catch(() => {
-                return caches.match("./index.html");
+                return caches.match("/hamur-odasi/index.html");
             });
         })
     );
