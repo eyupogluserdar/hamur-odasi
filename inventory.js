@@ -281,7 +281,7 @@
 
             document.querySelectorAll('.btn-delete').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
-                    if (confirm('Silmek istediğine emin misin?')) {
+                    if (await window.App.showConfirm('Sil', 'Silmek istediğine emin misin?')) {
                         const id = btn.dataset.id;
                         await window.App.Storage.deleteItem('ingredients', id);
                         document.querySelector('[data-target="inventory"]').click();
