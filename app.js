@@ -22,35 +22,74 @@
         }
     };
 
-    // Helper: Global Confirm
-    window.App.showConfirm = function (title, message, onConfirm) {
-        const modal = document.getElementById('modal-confirm');
-        const titleEl = document.getElementById('confirm-title');
-        const msgEl = document.getElementById('confirm-message');
-        const btnOk = document.getElementById('btn-confirm-ok');
-        const btnCancel = document.getElementById('btn-confirm-cancel');
+    // Helper: Global Confirm/Alert (Promise-based)
+    window.App.showConfirm = function (title, message) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('modal-confirm');
+            const titleEl = document.getElementById('confirm-title');
+            const msgEl = document.getElementById('confirm-message');
+            const btnOk = document.getElementById('btn-confirm-ok');
+            const btnCancel = document.getElementById('btn-confirm-cancel');
 
-        titleEl.textContent = title;
-        msgEl.innerHTML = message; // Allow HTML for bold text etc.
+            titleEl.textContent = title;
+            msgEl.innerHTML = message;
+            btnCancel.style.display = 'block'; // Ensure cancel is visible
+            btnOk.textContent = 'Evet, Onayla';
+            btnOk.className = 'btn btn-primary';
 
-        // Reset listeners
-        const newBtnOk = btnOk.cloneNode(true);
-        btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+            // Clean previous listeners by cloning
+            const newBtnOk = btnOk.cloneNode(true);
+            btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+            const newBtnCancel = btnCancel.cloneNode(true);
+            btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
 
-        const newBtnCancel = btnCancel.cloneNode(true);
-        btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
+            const close = (result) => {
+                modal.classList.remove('open');
+                resolve(result);
+            };
 
-        // Bind
-        newBtnOk.addEventListener('click', () => {
-            onConfirm();
-            modal.classList.remove('open');
+            newBtnOk.addEventListener('click', () => close(true));
+            newBtnCancel.addEventListener('click', () => close(false));
+
+            // Background click to cancel
+            modal.onclick = (e) => {
+                if (e.target === modal) close(false);
+            };
+
+            modal.classList.add('open');
         });
+    };
 
-        newBtnCancel.addEventListener('click', () => {
-            modal.classList.remove('open');
+    window.App.showAlert = function (title, message) {
+        return new Promise((resolve) => {
+            const modal = document.getElementById('modal-confirm');
+            const titleEl = document.getElementById('confirm-title');
+            const msgEl = document.getElementById('confirm-message');
+            const btnOk = document.getElementById('btn-confirm-ok');
+            const btnCancel = document.getElementById('btn-confirm-cancel');
+
+            titleEl.textContent = title;
+            msgEl.innerHTML = message;
+            btnCancel.style.display = 'none'; // Hide cancel
+            btnOk.textContent = 'Tamam';
+            btnOk.className = 'btn btn-primary';
+
+            const newBtnOk = btnOk.cloneNode(true);
+            btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+
+            const close = () => {
+                modal.classList.remove('open');
+                resolve();
+            };
+
+            newBtnOk.addEventListener('click', close);
+            // Background click to close
+            modal.onclick = (e) => {
+                if (e.target === modal) close();
+            };
+
+            modal.classList.add('open');
         });
-
-        modal.classList.add('open');
     };
 
     const elements = {
