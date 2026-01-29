@@ -160,7 +160,7 @@
             const ingredients = await window.App.Storage.getAllItems('ingredients') || [];
 
             if (!recipe) {
-                alert("Reçete bulunamadı!");
+                await window.App.showAlert('Hata', "Reçete bulunamadı!");
                 return;
             }
 
@@ -214,14 +214,23 @@
 
 
             // Snapshot critical data
-            let primaryFlourSelect = null;
-            if (recipe.flours && recipe.flours.length > 0) primaryFlourSelect = ingredients.find(i => i.id === recipe.flours[0].id);
-            else if (recipe.flourId) primaryFlourSelect = ingredients.find(i => i.id === recipe.flourId);
+            let flourName = 'Un';
+            if (recipe.flours && recipe.flours.length > 0) {
+                const names = [];
+                recipe.flours.forEach(f => {
+                    const item = ingredients.find(i => i.id === f.id);
+                    if (item) names.push(item.name);
+                });
+                flourName = names.length > 0 ? names.join(' + ') : 'Mix Un';
+            } else if (recipe.flourId) {
+                const f = ingredients.find(i => i.id === recipe.flourId);
+                if (f) flourName = f.name;
+            }
 
             const snapshot = {
                 recipeId: recipe.id,
                 recipeName: recipe.name,
-                flourName: primaryFlourSelect ? primaryFlourSelect.name : (recipe.flours && recipe.flours.length > 1 ? 'Mix Un' : 'Un'),
+                flourName: flourName,
                 flourAmount: recipe.flourAmount,
                 waterAmount: recipe.waterAmount,
                 hydration: recipe.hydration,
@@ -268,26 +277,24 @@
             this.updateUI();
         },
 
-        finishBatch(id) {
-            window.App.showConfirm(
+        async finishBatch(id) {
+            if (await window.App.showConfirm(
                 "Üretimi Bitir",
-                "Stoğa almak istiyor musun?",
-                async () => {
-                    await window.App.Storage.deleteItem('production_logs', id);
-                    this.updateUI();
-                }
-            );
+                "Stoğa almak istiyor musun?"
+            )) {
+                await window.App.Storage.deleteItem('production_logs', id);
+                this.updateUI();
+            }
         },
 
-        cancelBatch(id) {
-            window.App.showConfirm(
+        async cancelBatch(id) {
+            if (await window.App.showConfirm(
                 "İptal Et",
-                "Bu kayıt silinecek. Emin misin?",
-                async () => {
-                    await window.App.Storage.deleteItem('production_logs', id);
-                    this.updateUI();
-                }
-            );
+                "Bu kayıt silinecek. Emin misin?"
+            )) {
+                await window.App.Storage.deleteItem('production_logs', id);
+                this.updateUI();
+            }
         },
 
         async updateUI() {
