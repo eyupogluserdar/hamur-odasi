@@ -145,6 +145,10 @@
                                     <label class="form-label">Protein Oranı (%)</label>
                                     <input type="number" step="0.1" class="form-control" id="inp-protein" placeholder="Örn: 13.5">
                                 </div>
+                                <div class="form-group">
+                                    <label class="form-label">W Değeri (Enerji) <span style="font-size:0.7rem; color:#888;">(Biliyorsanız)</span></label>
+                                    <input type="number" class="form-control" id="inp-w-value" placeholder="Örn: 280">
+                                </div>
                                 
                                 <!-- Automatic Gluten Display -->
                                 <div class="form-group" style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.1);">
@@ -156,6 +160,18 @@
                                         </div>
                                     </div>
                                     <input type="hidden" id="inp-gluten"> <!-- Storing label automatically -->
+                                </div>
+                            </div>
+
+                            <!-- Yeast Specific Fields -->
+                            <div id="yeast-fields" style="display:none;">
+                                <div class="form-group">
+                                    <label class="form-label">Maya Tipi</label>
+                                    <select class="form-control" id="inp-yeast-type">
+                                        <option value="instant">Instant (Kuru)</option>
+                                        <option value="active_dry">Aktif Kuru (Suda Eritilen)</option>
+                                        <option value="fresh">Yaş Maya (Pakmaya)</option>
+                                    </select>
                                 </div>
                             </div>
 
@@ -196,7 +212,9 @@
             const form = document.getElementById('form-ingredient');
             const typeBtns = document.querySelectorAll('.type-btn');
             const typeInput = document.getElementById('inp-type');
+
             const flourFields = document.getElementById('flour-fields');
+            const yeastFields = document.getElementById('yeast-fields');
             const proteinInput = document.getElementById('inp-protein');
 
             // Auto-Gluten Logic
@@ -226,6 +244,7 @@
                 typeBtns[0].classList.add('active'); // Set Flour active
                 document.getElementById('inp-unit').value = 'kg'; // Default flour unit
                 flourFields.style.display = 'block';
+                yeastFields.style.display = 'none';
 
                 // Reset visualization
                 document.getElementById('txt-gluten-label').textContent = '-';
@@ -240,6 +259,7 @@
                     const type = btn.dataset.type;
                     typeInput.value = type;
                     flourFields.style.display = (type === 'flour') ? 'block' : 'none';
+                    yeastFields.style.display = (type === 'yeast') ? 'block' : 'none';
 
                     // Default Unit
                     const unitSelect = document.getElementById('inp-unit');
@@ -268,7 +288,10 @@
 
                     if (formData.type === 'flour') {
                         formData.protein = document.getElementById('inp-protein').value;
-                        formData.gluten = document.getElementById('inp-gluten').value; // Stores label, mainly for legacy compatibility or quick read
+                        formData.wValue = document.getElementById('inp-w-value').value;
+                        formData.gluten = document.getElementById('inp-gluten').value; // Stores label
+                    } else if (formData.type === 'yeast') {
+                        formData.yeastType = document.getElementById('inp-yeast-type').value;
                     }
 
                     await window.App.Storage.addItem('ingredients', formData);
