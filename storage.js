@@ -174,7 +174,7 @@
                 window.location.reload();
             } catch (err) {
                 console.error("Backup import failed:", err);
-                alert("Yedek yükleme sırasında hata oluştu: " + err.message);
+                await window.App.showAlert('Hata', "Yedek yükleme sırasında hata oluştu: " + err.message);
             }
         },
 
