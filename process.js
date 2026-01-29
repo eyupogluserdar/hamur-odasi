@@ -1,21 +1,36 @@
 
 (function () {
+    // Audio Context Singleton (Lazy Loaded)
+    let audioCtx = null;
+    let alarmInterval = null;
     let timerInterval = null;
     let soundPlayed = false;
 
+    function getAudioContext() {
+        if (!audioCtx) {
+            const Ctx = window.AudioContext || window.webkitAudioContext; // Safari compat
+            if (Ctx) audioCtx = new Ctx();
+        }
+        return audioCtx;
+    }
+
     function playAlert() {
         try {
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if (!AudioContext) return;
+            const ctx = getAudioContext();
+            if (!ctx) return;
 
-            const ctx = new AudioContext();
+            // Important: Resume context if suspended (browser autoplay policy)
+            if (ctx.state === 'suspended') {
+                ctx.resume().catch(e => console.warn("Audio resume failed:", e));
+            }
+
             const osc = ctx.createOscillator();
             const gain = ctx.createGain();
 
             osc.connect(gain);
             gain.connect(ctx.destination);
 
-            osc.type = 'sawtooth'; // More alarming
+            osc.type = 'sawtooth';
             osc.frequency.setValueAtTime(440, ctx.currentTime);
             osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.1);
 
@@ -24,15 +39,16 @@
 
             osc.start();
             osc.stop(ctx.currentTime + 0.5);
-        } catch (e) { console.error("Audio error:", e); }
+        } catch (e) {
+            console.error("Audio error:", e);
+        }
     }
 
-    let alarmInterval = null;
-
     function startAlarm() {
-        if (alarmInterval) return; // Already running
-        playAlert(); // Play immediately
-        alarmInterval = setInterval(playAlert, 2000); // Loop every 2s
+        if (alarmInterval) return;
+        playAlert();
+        // Alarm Loop
+        alarmInterval = setInterval(playAlert, 2000);
     }
 
     function stopAlarm() {
@@ -220,17 +236,29 @@
             // Fetch Recipe
             const recipe = await window.App.Storage.getItemById('recipes', activeProcess.recipeId);
             if (!recipe) {
-                alert('Orijinal reçete bulunamadı.');
+                await window.App.showAlert('Hata', 'Orijinal reçete bulunamadı.');
                 return;
             }
 
             // Create Snapshot
-            const flourItem = (await window.App.Storage.getAllItems('ingredients')).find(i => i.id === recipe.flourId);
+            const allIngredients = await window.App.Storage.getAllItems('ingredients');
+            let flourName = 'Un';
+
+            if (recipe.flours && recipe.flours.length > 0) {
+                const names = recipe.flours.map(f => {
+                    const item = allIngredients.find(i => i.id === f.id);
+                    return item ? item.name : '??';
+                });
+                flourName = names.join(' + ');
+            } else if (recipe.flourId) {
+                const item = allIngredients.find(i => i.id === recipe.flourId);
+                flourName = item ? item.name : 'Un';
+            }
 
             const snapshot = {
                 recipeId: recipe.id,
                 recipeName: recipe.name,
-                flourName: flourItem ? flourItem.name : 'Un',
+                flourName: flourName,
                 flourAmount: recipe.flourAmount,
                 waterAmount: recipe.waterAmount,
                 hydration: recipe.hydration,
@@ -274,6 +302,12 @@
                 } else {
                     step.startedAt = Date.now();
                 }
+
+                // Unlock Audio Context on user gesture
+                const ctx = getAudioContext();
+                if (ctx && ctx.state === 'suspended') {
+                    ctx.resume();
+                }
             } else if (action === 'pause') {
                 step.status = 'paused';
                 const elapsed = Math.floor((Date.now() - step.startedAt) / 1000);
@@ -296,8 +330,8 @@
                 this.afterRender();
             });
         },
-        resetAction() {
-            if (confirm('Üretim süreci iptal edilecek. Emin misin?')) {
+        async resetAction() {
+            if (await window.App.showConfirm('İptal', 'Üretim süreci iptal edilecek. Emin misin?')) {
                 stopAlarm();
                 localStorage.removeItem('active_process');
                 this.render().then(html => {
