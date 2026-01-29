@@ -252,7 +252,7 @@
                                         <ion-icon name="water-outline"></ion-icon> Su Miktarı
                                     </label>
                                     <div style="display: flex; align-items: center; gap: 10px;">
-                                        <input type="number" class="form-control" id="water-amount" placeholder="Miktar" value="650" style="flex: 1;">
+                                        <input type="number" step="any" class="form-control" id="water-amount" placeholder="Miktar" value="650" style="flex: 1;">
                                         <span style="color: var(--color-text-secondary);">ml</span>
                                     </div>
                                 </div>
@@ -296,7 +296,7 @@
                                 <div style="display: flex; align-items: center; gap: 10px;">
                                     <div style="flex:1">
                                         <span style="font-size: 0.8rem; color: #888;">Top Gramajı</span>
-                                        <input type="number" class="form-control" id="ball-weight" value="250">
+                                        <input type="number" step="any" class="form-control" id="ball-weight" value="250">
                                     </div>
                                     <div style="flex:1; text-align: center;">
                                         <span style="font-size: 0.8rem; color: #888;">Adet</span>
@@ -522,7 +522,7 @@
                     ${options}
                 </select>
                 <div style="display:flex; align-items:center; gap:5px; flex:1;">
-                     <input type="number" class="form-control flour-amount" placeholder="gr" value="${preAmount}" style="width:100%;">
+                     <input type="number" step="any" class="form-control flour-amount" placeholder="gr" value="${preAmount}" style="width:100%;">
                      <span style="font-size:0.7rem; color:#888;">gr</span>
                 </div>
                 <button type="button" class="icon-btn btn-remove-flour" style="color: var(--color-danger);"><ion-icon name="close-circle-outline"></ion-icon></button>
@@ -533,13 +533,13 @@
             const self = this;
             div.querySelector('.flour-select').addEventListener('change', () => self.updateCalculations());
             div.querySelector('.flour-amount').addEventListener('input', () => self.updateCalculations());
-            div.querySelector('.btn-remove-flour').onclick = () => {
+            div.querySelector('.btn-remove-flour').onclick = async () => {
                 // Don't allow removing last flour row to prevent empty state issues (optional but good UX)
                 if (document.querySelectorAll('.flour-row').length > 1) {
                     div.remove();
                     self.updateCalculations();
                 } else {
-                    alert('En az bir un çeşidi girmelisiniz.');
+                    await window.App.showAlert('Uyarı', 'En az bir un çeşidi girmelisiniz.');
                 }
             };
             self.updateCalculations();
@@ -564,7 +564,7 @@
                 <select class="form-control ing-select" style="flex: 2;">
                     ${options ? options : '<option disabled>Stokta malzeme yok</option>'}
                 </select>
-                <input type="number" class="form-control ing-amount" placeholder="gr" value="${preValue}" style="flex: 1;">
+                <input type="number" step="any" class="form-control ing-amount" placeholder="gr" value="${preValue}" style="flex: 1;">
                 <button type="button" class="icon-btn btn-remove-row" style="color: var(--color-danger);"><ion-icon name="close-circle-outline"></ion-icon></button>
             `;
 
@@ -595,7 +595,7 @@
             div.innerHTML = `
                 <select class="form-control step-type" style="flex: 1; min-width: 80px; font-size: 0.85rem;">${typeOptions}</select>
                 <input type="text" class="form-control step-title" placeholder="Başlık (Opsiyonel)" value="${step ? step.title : ''}" style="flex: 2; font-size: 0.85rem;">
-                <div style="display:flex; align-items:center; gap:4px; flex: 1;">
+                <div style="display:flex; align-items:center; gap:4px; flex: 1; min-width: 100px;">
                     <input type="number" class="form-control step-duration" placeholder="Dk" value="${step ? step.durationMin : ''}" style="width: 100%; font-size: 0.85rem;">
                     <span style="font-size:0.7rem; color:#888;">dk</span>
                 </div>
@@ -641,13 +641,14 @@
                     if (!recipe) return;
 
                     if (!recipe.productionSteps || recipe.productionSteps.length === 0) {
-                        window.App.showConfirm('Adım Yok', 'Bu reçetede tanımlı üretim adımı yok. Önce adımları tanımlamak ister misiniz?', async () => {
+                        const wantToEdit = await window.App.showConfirm('Adım Yok', 'Bu reçetede tanımlı üretim adımı yok. Önce adımları tanımlamak ister misiniz?');
+                        if (wantToEdit) {
                             await self.openModal(rId);
-                        });
+                        }
                         return;
                     }
 
-                    if (confirm(`"${recipe.name}" için üretim süreci başlatılsın mı?`)) {
+                    if (await window.App.showConfirm('Üretimi Başlat', `"${recipe.name}" için üretim süreci başlatılsın mı?`)) {
                         const processData = {
                             recipeId: recipe.id,
                             recipeName: recipe.name,
@@ -687,7 +688,7 @@
                         }
                     });
 
-                    if (flours.length === 0) { alert('En az bir un seçmelisiniz.'); return; }
+                    if (flours.length === 0) { await window.App.showAlert('Hata', 'En az bir un seçmelisiniz.'); return; }
 
                     const extraIngredients = [];
                     document.querySelectorAll('.ingredient-row').forEach(row => {
@@ -787,7 +788,7 @@
 
             document.querySelectorAll('.btn-delete-recipe').forEach(btn => {
                 btn.onclick = async () => {
-                    if (confirm('Silmek istediğine emin misiniz?')) {
+                    if (await window.App.showConfirm('Sil', 'Silmek istediğine emin misiniz?')) {
                         const id = btn.dataset.id;
                         await window.App.Storage.deleteItem('recipes', id);
                         const content = await window.App.Recipes.render();
