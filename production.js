@@ -58,34 +58,133 @@
             `;
         },
 
+        // Helper to get params for speed calc
+        getBatchParams(batch, temp) {
+            // Reconstruct params for engine
+            // Need: totalFlour, yeastAmount, yeastType, saltAmount, waterAmount, roomTemp
+            // We have snapshot.ingredients
+            if (!batch.snapshot || !batch.snapshot.ingredients) return null;
+
+            let totalFlour = batch.snapshot.flourAmount || 1000;
+            let totalYeast = 0;
+            let yeastType = 'instant';
+            let totalSalt = 0;
+            let water = batch.snapshot.waterAmount || 600;
+
+            // Extract from snapshot ingredients
+            // If snapshot is old (no ingredients), use rough defaults or fail gracefully
+            batch.snapshot.ingredients.forEach(i => {
+                // We need to guess type/name if not fully preserved, but we saved full object in process.js
+                // Assuming standard "type" field usage
+                if (i.type === 'yeast') {
+                    totalYeast += i.amount;
+                    if (i.yeastType) yeastType = i.yeastType;
+                }
+                if (i.type === 'salt') totalSalt += i.amount;
+            });
+
+            // If totalFlour is mix, we might need to sum it up if not in snapshot? 
+            // Snapshot has flourAmount.
+
+            return {
+                totalFlour,
+                yeastAmount: totalYeast,
+                yeastType,
+                saltAmount: totalSalt,
+                waterAmount: water,
+                roomTemp: temp
+            };
+        },
+
         renderBatchCard(batch) {
             const now = Date.now();
             let phaseDuration = 0;
             let statusText = "";
             let phaseColor = "#555";
             let mainActionBtn = "";
+            const currentTemp = (batch.status === 'fridge') ? 4 : (batch.snapshot.roomTemp || 24); // Use saved room temp or 24 default
 
-            // Calculate Current Phase Duration
+            // 1. Calculate Accrued Work (Fermentation Progress)
+            const BASELINE_WORK = 180; // Total work units needed (Minutes at Standard Speed)
+            let accruedWork = 0;
+
+            // A. Past History
+            if (batch.history) {
+                batch.history.forEach(h => {
+                    // Determine temp for this phase
+                    const pTemp = (h.phase === 'fridge') ? 4 : (batch.snapshot.roomTemp || 24);
+                    const params = this.getBatchParams(batch, pTemp);
+                    let speed = 1.0;
+                    if (params && window.App.Engine) {
+                        speed = window.App.Engine.calculateFermentationSpeed(params);
+                    } else {
+                        // Fallback logic if no params (Old data)
+                        speed = (h.phase === 'fridge') ? 0.15 : 1.0;
+                    }
+
+                    const durationMin = h.duration / 60000;
+                    accruedWork += (durationMin * speed);
+                });
+            }
+
+            // B. Current Phase
+            let currentPhaseStart = batch.startTime;
+            if (batch.status === 'fridge') currentPhaseStart = batch.fridgeStartTime;
+            if (batch.status === 'room_final') currentPhaseStart = batch.finalRoomStartTime;
+
+            phaseDuration = now - currentPhaseStart;
+            const currentDurationMin = phaseDuration / 60000;
+
+            const currentParams = this.getBatchParams(batch, currentTemp);
+            let currentSpeed = 1.0;
+            if (currentParams && window.App.Engine) {
+                currentSpeed = window.App.Engine.calculateFermentationSpeed(currentParams);
+            } else {
+                currentSpeed = (batch.status === 'fridge') ? 0.15 : 1.0;
+            }
+
+            accruedWork += (currentDurationMin * currentSpeed);
+
+            // 2. Predict Remaining
+            const remainingWork = Math.max(0, BASELINE_WORK - accruedWork);
+            let timeToPeakMin = 0;
+            if (currentSpeed > 0) {
+                timeToPeakMin = remainingWork / currentSpeed;
+            }
+
+            const progressPct = Math.min(100, (accruedWork / BASELINE_WORK) * 100);
+
+            // UI Logic
             if (batch.status === 'room') {
-                phaseDuration = now - batch.startTime;
-                statusText = "Oda Sıcaklığı (1. Evre)";
+                statusText = `Oda Sıcaklığı (${currentTemp}°C)`;
                 phaseColor = getPhaseColor('room', phaseDuration / 3600000);
                 mainActionBtn = `<button class="btn btn-primary btn-action" data-action="to_fridge" data-id="${batch.id}">Dolaba Al ❄️</button>`;
             }
             else if (batch.status === 'fridge') {
-                phaseDuration = now - batch.fridgeStartTime;
                 statusText = "Dolapta (+4°C)";
                 phaseColor = getPhaseColor('fridge');
                 mainActionBtn = `<button class="btn btn-warning btn-action" data-action="from_fridge" data-id="${batch.id}" style="color:#000;">Dolaptan Çıkar 🔥</button>`;
             }
             else if (batch.status === 'room_final') {
-                phaseDuration = now - batch.finalRoomStartTime;
                 statusText = "Tezgaha Alındı (Son Evre)";
                 phaseColor = getPhaseColor('room_final');
                 mainActionBtn = `<span class="badge" style="background:rgba(255,255,255,0.1);">Hazırlanıyor</span>`;
             }
 
             const totalDuration = now - batch.startTime;
+
+            // Format Remaining
+            let remainingText = "";
+            let remainingColor = "#aaa";
+            if (timeToPeakMin <= 0) {
+                remainingText = "PİK NOKTASI! (Hazır)";
+                remainingColor = "var(--color-success)";
+            } else {
+                const h = Math.floor(timeToPeakMin / 60);
+                const m = Math.floor(timeToPeakMin % 60);
+                remainingText = `${h} sa ${m} dk sonra hazır`;
+                remainingColor = "#fff";
+            }
 
             return `
                 <div class="card" style="border-left: 4px solid ${phaseColor};">
@@ -106,6 +205,17 @@
                     </div>
 
                     <div class="card-body" style="margin: 15px 0;">
+                        <!-- Progress Bar -->
+                        <div style="margin-bottom:15px;">
+                             <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:4px; color:#aaa;">
+                                <span>Fermantasyon Durumu</span>
+                                <span style="color:${remainingColor}; font-weight:bold;">${remainingText}</span>
+                             </div>
+                             <div style="background:rgba(255,255,255,0.1); height:8px; border-radius:4px; overflow:hidden;">
+                                <div style="width:${progressPct}%; background:${progressPct >= 100 ? 'var(--color-success)' : 'var(--color-primary)'}; height:100%; transition: width 0.5s;"></div>
+                             </div>
+                        </div>
+
                         <!-- Dual Timer Display -->
                         <div style="display: flex; gap: 10px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 12px; align-items: center; justify-content: space-around;">
                             <div style="text-align: center;">
@@ -116,7 +226,7 @@
                             </div>
                             <div style="width: 1px; height: 40px; background: rgba(255,255,255,0.1);"></div>
                             <div style="text-align: center;">
-                                <div style="font-size: 0.75rem; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 1px;">Toplam Yaş</div>
+                                <div style="font-size: 0.75rem; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 1px;">Toplam Geçen</div>
                                 <div style="font-size: 1.8rem; font-weight: 300; line-height: 1.2; margin-top: 4px;">
                                     ${formatDuration(totalDuration)}
                                 </div>
@@ -238,7 +348,14 @@
                 ballWeight: recipe.ballWeight,
                 yieldCount: yieldCount,
                 totalCost: parseFloat(totalCost.toFixed(2)),
-                unitCost: parseFloat(unitCost.toFixed(2))
+                unitCost: parseFloat(unitCost.toFixed(2)),
+                // Expanded Snapshot Data
+                roomTemp: recipe.roomTemp,
+                ingredients: recipe.ingredients,
+                flours: recipe.flours,
+                flourId: recipe.flourId,
+                waterTemp: recipe.waterTemp,
+                targetTime: recipe.targetTime
             };
 
             const newBatch = {
