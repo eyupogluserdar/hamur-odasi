@@ -165,11 +165,16 @@
             elements.mainView.innerHTML = '<div class="empty-state"><ion-icon name="sync-outline" class="spin"></ion-icon><p>Yükleniyor...</p></div>';
 
             // Async Render
-            const content = await window.App[moduleName].render();
-            elements.mainView.innerHTML = content;
+            try {
+                const content = await window.App[moduleName].render();
+                elements.mainView.innerHTML = content;
 
-            if (window.App[moduleName].afterRender) {
-                window.App[moduleName].afterRender();
+                if (window.App[moduleName].afterRender) {
+                    window.App[moduleName].afterRender();
+                }
+            } catch (err) {
+                console.error('Render Error:', err);
+                elements.mainView.innerHTML = `<div class="empty-state" style="color:#e74c3c"><ion-icon name="alert-circle-outline"></ion-icon><p>Modül hatası: ${err.message}</p><p style="font-size:0.8rem">${err.stack}</p></div>`;
             }
         } else {
             elements.mainView.innerHTML = `<div class="empty-state"><p>Modül yüklenemedi: ${moduleName}</p></div>`;
