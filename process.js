@@ -264,7 +264,8 @@
                 hydration: recipe.hydration,
                 totalWeight: recipe.totalWeight,
                 ballWeight: recipe.ballWeight,
-                yieldCount: Math.floor((recipe.totalWeight || 0) / (recipe.ballWeight || 250))
+                yieldCount: Math.floor((recipe.totalWeight || 0) / (recipe.ballWeight || 250)),
+                ingredients: recipe.ingredients // Snapshot ingredients for dynamic calculation
             };
 
             const newBatch = {
