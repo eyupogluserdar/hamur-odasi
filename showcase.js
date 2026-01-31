@@ -45,8 +45,104 @@
             `;
         },
 
+        // Helper to get params for speed calc (Ported from Production)
+        getBatchParams(batch, temp, allIngredients = []) {
+            if (!batch.snapshot || !batch.snapshot.ingredients) return null;
+
+            let totalFlour = batch.snapshot.flourAmount || 1000;
+            let totalYeast = 0;
+            let yeastType = 'instant';
+            let totalSalt = 0;
+            let totalFat = 0;
+            let totalMilk = 0;
+            let water = batch.snapshot.waterAmount || 600;
+
+            batch.snapshot.ingredients.forEach(i => {
+                // Lookup full item details
+                const item = allIngredients.find(inv => inv.id === i.id);
+                if (item) {
+                    const nameLower = item.name.toLowerCase();
+                    // Check specific type or name match
+                    if (item.type === 'yeast' || nameLower.includes('maya') || nameLower.includes('yeast')) {
+                        totalYeast += i.amount;
+                        if (nameLower.includes('yaş') || nameLower.includes('fresh')) yeastType = 'fresh';
+                        else if (nameLower.includes('ekşi') || nameLower.includes('sour')) yeastType = 'sourdough';
+                    }
+                    if (item.type === 'salt' || nameLower.includes('tuz') || nameLower.includes('salt')) {
+                        totalSalt += i.amount;
+                    }
+                    if (item.type === 'sugar' || nameLower.includes('şeker') || nameLower.includes('sugar')) {
+                        // totalSugar += i.amount; // If needed later
+                    }
+                    // Fat logic
+                    if (item.type === 'oil' || item.type === 'fat' || nameLower.includes('yağ') || nameLower.includes('oil') || nameLower.includes('butter') || nameLower.includes('tereyağ')) {
+                        totalFat += i.amount;
+                    }
+                    // Milk logic
+                    if (item.type === 'milk' || nameLower.includes('süt') || nameLower.includes('milk')) {
+                        totalMilk += i.amount;
+                    }
+                } else {
+                    // Fallback
+                    if (i.type === 'yeast') {
+                        totalYeast += i.amount;
+                        if (i.yeastType) yeastType = i.yeastType;
+                    }
+                    if (i.type === 'salt') totalSalt += i.amount;
+                    // Fallback for fat/milk tags if they exist in snapshot legacy
+                }
+            });
+
+            return {
+                totalFlour,
+                yeastAmount: totalYeast,
+                yeastType,
+                saltAmount: totalSalt,
+                waterAmount: water,
+                roomTemp: temp,
+                // Richness Params
+                fatRatio: (totalFat / totalFlour) * 100,
+                milkRatio: (totalMilk / totalFlour) * 100
+            };
+        },
+
         renderBatchCard(batch, recipes = [], ingredients = []) {
-            const recipe = batch.snapshot;
+            let recipe = batch.snapshot;
+
+            // 1. Status Text & Colors (Hoisted)
+            let statusColor = '#999';
+            let statusIcon = 'ellipse';
+            let statusLabel = 'Oda';
+
+            if (batch.status === 'fridge') {
+                statusColor = '#3498db';
+                statusIcon = 'snow';
+                statusLabel = 'Dolapta';
+            } else if (batch.status === 'room_final') {
+                statusColor = '#e67e22';
+                statusIcon = 'flame';
+                statusLabel = 'Tezgahta';
+            } else {
+                statusColor = '#f1c40f';
+                statusIcon = 'time';
+                statusLabel = 'Odada';
+            }
+
+            // Fallback: If no snapshot, try to find original recipe
+            if (!recipe) {
+                const found = recipes.find(r => r.id === batch.recipeId);
+                if (found) {
+                    recipe = { ...found, recipeName: found.name }; // Mock snapshot
+                } else {
+                    // Error state card
+                    return `
+                    <div class="card batch-card" style="border-left: 6px solid #e74c3c; padding: 20px;">
+                        <h3 style="color:#e74c3c">Veri Hatası</h3>
+                        <p style="color:#aaa; font-size:0.85rem">Bu üretim kaydının verileri bozuk veya silinmiş.</p>
+                        <button class="btn btn-text btn-delete-batch" style="color:#e74c3c; margin-top:10px" onclick="window.App.Storage.deleteItem('production_logs', ${batch.id}).then(()=>window.location.reload())">Kaydı Sil</button>
+                    </div>`;
+                }
+            }
 
             // --- Cost Display Logic ---
             let displayCost = '0.00';
@@ -98,34 +194,105 @@
             }
             // --------------------------
 
-            // Status Color & Icon
-            let statusColor = '#999';
-            let statusIcon = 'ellipse';
-            let statusLabel = 'Oda';
+            // 1. Calculate Accrued Work (Fermentation Progress)
+            const BASELINE_WORK = 180; // Total work units to Peak
+            const TOLERANCE_WORK = 180; // Total work units for Tolerance Window (post-peak usability)
+            let accruedWork = 0;
+            const currentTemp = (batch.status === 'fridge') ? (batch.fridgeTemp || 4) : (batch.roomTemp || 24);
 
-            if (batch.status === 'fridge') {
-                statusColor = '#3498db';
-                statusIcon = 'snow';
-                statusLabel = 'Dolapta';
-            } else if (batch.status === 'room_final') {
-                statusColor = '#e67e22';
-                statusIcon = 'flame';
-                statusLabel = 'Tezgahta';
-            } else {
-                statusColor = '#f1c40f';
-                statusIcon = 'time';
-                statusLabel = 'Odada';
+            // A. Past History
+            if (batch.history) {
+                batch.history.forEach(h => {
+                    const pTemp = (h.phase === 'fridge') ? (batch.fridgeTemp || 4) : (batch.roomTemp || 24);
+                    const params = this.getBatchParams(batch, pTemp, ingredients);
+                    let speed = 1.0;
+                    if (params && window.App.Engine) {
+                        speed = window.App.Engine.calculateFermentationSpeed(params);
+                    } else {
+                        speed = (h.phase === 'fridge') ? 0.15 : 1.0;
+                    }
+                    const durationMin = h.duration / 60000;
+                    accruedWork += (durationMin * speed);
+                });
             }
 
-            // Calculate Total Age
-            const ageMs = Date.now() - batch.startTime;
-
-            // Calculate Phase Time
+            // B. Current Phase
             let phaseStartTime = batch.startTime;
-            if (batch.status === 'fridge' && batch.fridgeStartTime) phaseStartTime = batch.fridgeStartTime;
-            if (batch.status === 'room_final' && batch.finalRoomStartTime) phaseStartTime = batch.finalRoomStartTime;
+            if (batch.status === 'fridge') phaseStartTime = batch.fridgeStartTime;
+            if (batch.status === 'room_final') phaseStartTime = batch.finalRoomStartTime;
 
-            const phaseMs = Date.now() - phaseStartTime;
+            const now = Date.now();
+            const phaseMs = now - phaseStartTime;
+            const currentDurationMin = phaseMs / 60000;
+
+            const currentParams = this.getBatchParams(batch, currentTemp, ingredients);
+            let currentSpeed = 1.0;
+            if (currentParams && window.App.Engine) {
+                currentSpeed = window.App.Engine.calculateFermentationSpeed(currentParams);
+            } else {
+                currentSpeed = (batch.status === 'fridge') ? 0.15 : 1.0;
+            }
+
+            accruedWork += (currentDurationMin * currentSpeed);
+
+
+
+            // 2. Determine Phase & Predict Remaining
+            let progressPct = 0;
+            let remainingText = "";
+            let remainingColor = "#aaa";
+            let barColor = statusColor; // Default to phase color
+            let progressLabel = "Mayalanma";
+
+            if (accruedWork < BASELINE_WORK) {
+                // PHASE 1: MATURATION (Mayalanma)
+                progressPct = Math.min(100, (accruedWork / BASELINE_WORK) * 100);
+                const remainingWork = BASELINE_WORK - accruedWork;
+
+                let timeToPeakMin = 0;
+                if (currentSpeed > 0) timeToPeakMin = remainingWork / currentSpeed;
+
+                const h = Math.floor(timeToPeakMin / 60);
+                const m = Math.floor(timeToPeakMin % 60);
+                remainingText = `${h}s ${m}d sonra HAZIR`;
+                remainingColor = "#fff";
+                progressLabel = "Mayalanma";
+                barColor = statusColor;
+
+            } else {
+                // PHASE 2: TOLERANCE (Kullanım Penceresi)
+                const consumedTolerance = accruedWork - BASELINE_WORK;
+                const remainingToleranceWork = Math.max(0, TOLERANCE_WORK - consumedTolerance);
+
+                // Calculate Tolerance % (How much of the window is GONE)
+                progressPct = Math.min(100, (consumedTolerance / TOLERANCE_WORK) * 100);
+
+                let timeToSpoilMin = 0;
+                if (currentSpeed > 0) timeToSpoilMin = remainingToleranceWork / currentSpeed;
+
+                const h = Math.floor(timeToSpoilMin / 60);
+                const m = Math.floor(timeToSpoilMin % 60);
+
+                if (timeToSpoilMin > 0) {
+                    remainingText = `<ion-icon name="hourglass-outline" style="vertical-align:text-bottom"></ion-icon> ${h}s ${m}d Kullanılabilir`;
+                    remainingColor = "var(--color-success)";
+                    progressLabel = "Tolerans (Kalan Süre)";
+
+                    // Dynamic Bar Color based on consumption
+                    if (progressPct < 50) barColor = "var(--color-success)"; // Fresh
+                    else if (progressPct < 80) barColor = "#f1c40f"; // Warning
+                    else barColor = "#e74c3c"; // Critical
+                } else {
+                    remainingText = "AŞIRI MAYALANMA!";
+                    remainingColor = "#e74c3c";
+                    progressLabel = "Süre Doldu";
+                    barColor = "#e74c3c";
+                }
+            }
+
+
+            // 3. (Restored) Calculate Total Age
+            const ageMs = Date.now() - batch.startTime;
 
             return `
                 <div class="card recipe-card batch-card" data-id="${batch.id}" style="
@@ -154,12 +321,23 @@
                         <ion-icon name="${statusIcon}-outline"></ion-icon> ${statusLabel}
                     </div>
 
-                    <div style="margin-bottom:20px;">
+                    <div style="margin-bottom:15px;">
                         <h3 style="font-size:1.6rem; margin-bottom: 8px; font-weight:700;">${recipe.recipeName || recipe.name}</h3>
                         <div style="display:flex; align-items:center; color:#aaa; font-size:0.95rem;">
                             <ion-icon name="calendar-clear-outline" style="margin-right:6px; color:var(--color-primary);"></ion-icon>
                             Bugün ${new Date(batch.startTime).toLocaleTimeString().slice(0, 5)}
                         </div>
+                    </div>
+
+                    <!-- Dynamic Progress Bar -->
+                    <div style="margin-bottom:20px;">
+                            <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:4px; color:#aaa;">
+                                <span>${progressLabel}: <span style="color:${barColor}; font-weight:bold;">%${Math.round(progressPct)}</span></span>
+                                <span id="batch-remaining-${batch.id}" style="color:${remainingColor}; font-weight:bold; font-size:0.75rem;">${remainingText}</span>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.1); height:8px; border-radius:4px; overflow:hidden;">
+                                <div id="batch-progress-${batch.id}" style="width:${progressPct}%; background:${barColor}; height:100%; transition: width 0.5s;"></div>
+                            </div>
                     </div>
                     
                     <div style="margin-top:auto;">
@@ -209,6 +387,12 @@
             const recipe = await window.App.Storage.getItemById('recipes', batch.recipeId);
             const allIngredients = await window.App.Storage.getAllItems('ingredients') || [];
 
+            // Discrepancy Fix: Ensure snapshot exists (Mirroring renderBatchCard logic)
+            if (!batch.snapshot && recipe) {
+                batch.snapshot = JSON.parse(JSON.stringify(recipe)); // Deep-ish copy to avoid ref issues
+                batch.snapshot.recipeName = recipe.name;
+            }
+
             const modal = document.createElement('div');
             modal.className = 'modal-overlay open';
             modal.style.zIndex = '2000';
@@ -219,7 +403,9 @@
                         <button class="icon-btn btn-close-modal"><ion-icon name="close-outline"></ion-icon></button>
                     </div>
                     
-                    ${this.renderBatchDetails(batch, recipe, allIngredients)}
+                    <div id="batch-details-container">
+                        ${this.renderBatchDetails(batch, recipe, allIngredients)}
+                    </div>
 
             <div style="margin-top:20px; text-align:right; border-top:1px solid rgba(255,255,255,0.1); padding-top:15px;">
                 <button class="btn btn-text btn-delete-batch" data-id="${batch.id}" style="color:#e74c3c; font-size:0.9rem;">
@@ -231,10 +417,60 @@
 
             document.body.appendChild(modal);
 
-            // Bind Events
+            // Close Handler
             modal.querySelector('.btn-close-modal').onclick = () => modal.remove();
 
-            // Re-bind delete
+            // Re-bindable Events Pattern
+            const bindEvents = () => {
+                const container = modal.querySelector('#batch-details-container') || modal; // Fallback to modal for first bind if needed, but container exists
+
+                // Re-bind delete (outside container, but safe to re-bind or keep static. It's static outside container)
+                // Actually delete button is OUTSIDE container in my new HTML above. So static bind is fine.
+
+                // Action Buttons
+                container.querySelectorAll('.btn-action-modal').forEach(btn => {
+                    btn.onclick = async () => {
+                        const action = btn.dataset.action;
+                        await this.handleAction(action, batch.id);
+                        modal.remove();
+
+                        if (action === 'complete') {
+                            await window.App.showAlert('Bilgi', 'Hamur kullanıldı ve stoktan düşüldü.');
+                            this.render().then(html => { document.getElementById('main-view').innerHTML = html; this.afterRender(); });
+                            return;
+                        }
+                        this.openBatchModal(batch.id); // Re-open full modal for actions that change state significantly
+                        this.render().then(html => { document.getElementById('main-view').innerHTML = html; this.afterRender(); });
+                    };
+                });
+
+                // Temperature Input - Dynamic Update
+                container.querySelectorAll('.temp-input-field').forEach(input => {
+                    input.onchange = async () => {
+                        const id = input.dataset.id;
+                        const type = input.dataset.type; // 'room' or 'fridge'
+                        const val = parseFloat(input.value);
+
+                        if (!isNaN(val)) {
+                            // 1. Update Memory
+                            if (type === 'room') batch.roomTemp = val;
+                            if (type === 'fridge') batch.fridgeTemp = val;
+
+                            // 2. Persist
+                            await this.updateBatchTemp(id, type, val);
+
+                            // 3. Re-Render Visuals (Scientific Recalc)
+                            const newHTML = this.renderBatchDetails(batch, recipe, allIngredients);
+                            document.getElementById('batch-details-container').innerHTML = newHTML;
+
+                            // 4. Re-Bind Events (elements replaced)
+                            bindEvents();
+                        }
+                    };
+                });
+            };
+
+            // Static Binds (Outside Container)
             modal.querySelector('.btn-delete-batch').onclick = async () => {
                 if (await window.App.showConfirm('Onay', 'Silmek istiyor musunuz?')) {
                     window.App.Storage.deleteItem('production_logs', batch.id).then(() => {
@@ -244,38 +480,8 @@
                 }
             };
 
-            // Action Buttons
-            modal.querySelectorAll('.btn-action-modal').forEach(btn => {
-                btn.onclick = async () => {
-                    const action = btn.dataset.action;
-                    await this.handleAction(action, batch.id);
-                    modal.remove();
-
-                    if (action === 'complete') {
-                        await window.App.showAlert('Bilgi', 'Hamur kullanıldı ve stoktan düşüldü.');
-                        // Re-render main view
-                        this.render().then(html => { document.getElementById('main-view').innerHTML = html; this.afterRender(); });
-                        return;
-                    }
-
-                    // Re-open updated
-                    this.openBatchModal(batch.id);
-                    // Update grid bg
-                    this.render().then(html => { document.getElementById('main-view').innerHTML = html; this.afterRender(); });
-                };
-            });
-
-            // Temperature Input
-            modal.querySelectorAll('.temp-input-field').forEach(input => {
-                input.onchange = async () => {
-                    const id = input.dataset.id;
-                    const type = input.dataset.type; // 'room' or 'fridge'
-                    const val = parseFloat(input.value);
-                    if (!isNaN(val)) {
-                        await this.updateBatchTemp(id, type, val); // Call helper
-                    }
-                };
-            });
+            // Initial Bind
+            bindEvents();
 
             // --- LIVE UPDATE LOGIC ---
             const updateTimers = () => {
@@ -367,38 +573,137 @@
         renderBatchDetails(batch, recipe, allIngredients) {
             const times = this.calculateBatchTimes(batch);
 
-            // ... (rest of logic) ...
-            // Re-using logic but mapped to new layout
-            // We need to return valid HTML string here.
+            // 1. Calculate Accrued Work (Fermentation Progress)
+            const BASELINE_WORK = 180; // Total work units to Peak
+            const TOLERANCE_WORK = 180; // Total work units for Tolerance Window (post-peak usability)
+            let accruedWork = 0;
 
-            let statusText = "";
-            let phaseColor = "#555";
-            let mainActionBtn = "";
-
-            // Temperature defaults
+            // Temperature defaults (ensure they are set before currentTemp is used)
             if (!batch.roomTemp) batch.roomTemp = 24;
             if (!batch.fridgeTemp) batch.fridgeTemp = 4;
 
-            let currentTemp = batch.roomTemp;
+            const currentTemp = (batch.status === 'fridge') ? (batch.fridgeTemp || 4) : (batch.roomTemp || 24);
+
+            // A. Past History
+            if (batch.history) {
+                batch.history.forEach(h => {
+                    const pTemp = (h.phase === 'fridge') ? (batch.fridgeTemp || 4) : (batch.roomTemp || 24);
+                    const params = this.getBatchParams(batch, pTemp, allIngredients);
+                    let speed = 1.0;
+                    if (params && window.App.Engine) {
+                        speed = window.App.Engine.calculateFermentationSpeed(params);
+                    } else {
+                        speed = (h.phase === 'fridge') ? 0.15 : 1.0;
+                    }
+                    const durationMin = h.duration / 60000;
+                    accruedWork += (durationMin * speed);
+                });
+            }
+
+            // B. Current Phase
+            let phaseStartTime = batch.startTime;
+            if (batch.status === 'fridge') phaseStartTime = batch.fridgeStartTime;
+            if (batch.status === 'room_final') phaseStartTime = batch.finalRoomStartTime;
+
+            const now = Date.now();
+            const phaseMs = now - phaseStartTime;
+            const currentDurationMin = phaseMs / 60000;
+
+            const currentParams = this.getBatchParams(batch, currentTemp, allIngredients);
+            let currentSpeed = 1.0;
+            if (currentParams && window.App.Engine) {
+                currentSpeed = window.App.Engine.calculateFermentationSpeed(currentParams);
+            } else {
+                currentSpeed = (batch.status === 'fridge') ? 0.15 : 1.0;
+            }
+
+            accruedWork += (currentDurationMin * currentSpeed);
+
+            // 2. Determine Phase & Predict Remaining
+            let progressPct = 0;
+            let remainingText = "";
+            let remainingColor = "#aaa";
+            let statusText = "";
+            let phaseColor = "#555";
+            let progressLabel = "Mayalanma";
+            let barColor = "#555"; // Initial fallback
+
+            if (batch.status === 'fridge') {
+                statusText = "DOLAP (FERMANTASYON)";
+                phaseColor = '#3498db';
+                barColor = '#3498db';
+            } else if (batch.status === 'room_final') {
+                statusText = "ODA (FERMANTASYON)";
+                phaseColor = '#e67e22';
+                barColor = '#e67e22';
+            } else {
+                statusText = "ODA (FERMANTASYON)";
+                phaseColor = '#f1c40f';
+                barColor = '#f1c40f';
+            }
+
+
+            if (accruedWork < BASELINE_WORK) {
+                // PHASE 1: MATURATION (Mayalanma)
+                progressPct = Math.min(100, (accruedWork / BASELINE_WORK) * 100);
+                const remainingWork = BASELINE_WORK - accruedWork;
+
+                let timeToPeakMin = 9999;
+                if (currentSpeed > 0) {
+                    timeToPeakMin = remainingWork / currentSpeed;
+                    const h = Math.floor(timeToPeakMin / 60);
+                    const m = Math.floor(timeToPeakMin % 60);
+                    remainingText = `${h}s ${m}d sonra HAZIR`;
+                    remainingColor = "#fff";
+                } else {
+                    remainingText = "STOP (Hız: 0)";
+                    remainingColor = "#e74c3c";
+                }
+                progressLabel = "Mayalanma";
+
+            } else {
+                // PHASE 2: TOLERANCE (Kullanım Penceresi)
+                const consumedTolerance = accruedWork - BASELINE_WORK;
+                const remainingToleranceWork = Math.max(0, TOLERANCE_WORK - consumedTolerance);
+
+                // Calculate Tolerance % (How much of the window is GONE)
+                progressPct = Math.min(100, (consumedTolerance / TOLERANCE_WORK) * 100);
+
+                let timeToSpoilMin = 0;
+                if (currentSpeed > 0) timeToSpoilMin = remainingToleranceWork / currentSpeed;
+
+                const h = Math.floor(timeToSpoilMin / 60);
+                const m = Math.floor(timeToSpoilMin % 60);
+
+                if (timeToSpoilMin > 0) {
+                    remainingText = `<ion-icon name="hourglass-outline" style="vertical-align:text-bottom"></ion-icon> ${h}s ${m}d Kullanılabilir`;
+                    remainingColor = "var(--color-success)";
+                    progressLabel = "Tolerans (Kalan Süre)";
+
+                    // Dynamic Bar Color based on consumption
+                    if (progressPct < 50) barColor = "var(--color-success)"; // Fresh
+                    else if (progressPct < 80) barColor = "#f1c40f"; // Warning
+                    else barColor = "#e74c3c"; // Critical
+                } else {
+                    remainingText = "AŞIRI MAYALANMA!";
+                    remainingColor = "#e74c3c";
+                    progressLabel = "Süre Doldu";
+                    barColor = "#e74c3c";
+                }
+            }
+
+            let mainActionBtn = "";
             let tempType = 'room';
 
             if (batch.status === 'room') {
-                statusText = "ODA (FERMANTASYON)";
-                phaseColor = '#f1c40f';
                 mainActionBtn = `<button class="btn btn-primary btn-action-modal" data-action="to_fridge" style="width:100%; padding:15px; font-size:1.1rem;">❄️ Dolaba Al</button>`;
-                currentTemp = batch.roomTemp;
                 tempType = 'room';
             }
             else if (batch.status === 'fridge') {
-                statusText = "DOLAP (FERMANTASYON)";
-                phaseColor = '#3498db';
                 mainActionBtn = `<button class="btn btn-warning btn-action-modal" data-action="from_fridge" style="width:100%; color:black; padding:15px; font-size:1.1rem;">🔥 Dolaptan Çıkar</button>`;
-                currentTemp = batch.fridgeTemp;
                 tempType = 'fridge';
             }
             else if (batch.status === 'room_final') {
-                statusText = "ODA (FERMANTASYON)";
-                phaseColor = '#e67e22';
                 mainActionBtn = `
                 <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
                         <button class="btn btn-secondary btn-action-modal" data-action="to_fridge">
@@ -409,7 +714,6 @@
                         </button>
                     </div>
                 `;
-                currentTemp = batch.roomTemp;
                 tempType = 'room';
             }
 
@@ -452,25 +756,46 @@
                         <span class="badge" style="background:${phaseColor}; color:${batch.status === 'fridge' ? '#fff' : '#000'}; font-size:1.2rem; padding:8px 16px;">${statusText}</span>
                      </div>
                      
-                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; text-align:center; margin-bottom:10px;">
-                        <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px;">
-                            <div style="font-size:0.75rem; color:#aaa; margin-bottom:5px;">ODA SÜRESİ</div>
-                            <div id="timer-room-val" style="font-size:1.2rem; font-weight:bold; color:#f1c40f; font-variant-numeric: tabular-nums;">
-                                ${batch.status === 'room' ? this.fmt(times.currentPhaseDuration) : (batch.status === 'room_final' ? this.fmt(times.currentPhaseDuration) : this.fmt(times.totalRoomTime))}
+                     <!-- Modal Progress Bar -->
+                    <div style="margin-bottom:20px; background:rgba(0,0,0,0.3); padding:10px; border-radius:8px;">
+                            <div style="display:flex; justify-content:space-between; font-size:0.8rem; margin-bottom:4px; color:#aaa;">
+                                <span>${progressLabel}: <span style="color:#fff; font-weight:bold;">%${Math.round(progressPct)}</span></span>
+                                <span style="color:${remainingColor}; font-weight:bold;">${remainingText}</span>
                             </div>
-                            ${(batch.status === 'room' && times.totalRoomTime > times.currentPhaseDuration) ? `
-                                <div style="font-size:0.7rem; color:#777; margin-top:2px;">Toplam: ${this.fmt(times.totalRoomTime)}</div>
-                            ` : ''}
-                             ${(batch.status === 'room_final' && times.totalRoomTime > times.currentPhaseDuration) ? `
-                                <div style="font-size:0.7rem; color:#777; margin-top:2px;">Toplam: ${this.fmt(times.totalRoomTime)}</div>
-                            ` : ''}
+                            <div style="background:rgba(255,255,255,0.1); height:10px; border-radius:5px; overflow:hidden;">
+                                <div style="width:${progressPct}%; background:${barColor}; height:100%; transition: width 0.5s;"></div>
+                            </div>
+                    </div>
+
+                    <!-- DEBUG INFO (Visible) -->
+                    <div style="font-size:0.6rem; color:#666; margin-top:5px; border-top:1px solid #333; padding-top:2px; font-family:monospace; margin-bottom:10px;">
+                        DEBUG: S=${Math.round(currentSpeed * 1000) / 1000} | W=${Math.round(accruedWork)}/${BASELINE_WORK} | R=${Math.round(BASELINE_WORK - accruedWork)}
+                    </div>
+
+                     <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; text-align:center; margin-bottom:10px;">
+                        <!-- Left Timer Block -->
+                        <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px;">
+                             ${batch.status === 'room_final' ? `
+                                <div style="font-size:0.75rem; color:#aaa; margin-bottom:5px;">TEZGAH SÜRESİ</div>
+                                <div id="timer-room-val" style="font-size:1.2rem; font-weight:bold; color:#e67e22; font-variant-numeric: tabular-nums;">
+                                    ${this.fmt(times.currentPhaseDuration)}
+                                </div>
+                                <div style="font-size:0.7rem; color:#777; margin-top:2px;">Toplam Oda: ${this.fmt(times.totalRoomTime)}</div>
+                             ` : `
+                                <div style="font-size:0.75rem; color:#aaa; margin-bottom:5px;">ODA SÜRESİ</div>
+                                <div id="timer-room-val" style="font-size:1.2rem; font-weight:bold; color:#f1c40f; font-variant-numeric: tabular-nums;">
+                                    ${batch.status === 'room' ? this.fmt(times.currentPhaseDuration) : this.fmt(times.totalRoomTime)}
+                                </div>
+                             `}
                         </div>
+
+                        <!-- Right Timer Block -->
                         <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px;">
                             <div style="font-size:0.75rem; color:#aaa; margin-bottom:5px;">DOLAP SÜRESİ</div>
                             <div id="timer-fridge-val" style="font-size:1.2rem; font-weight:bold; color:#3498db; font-variant-numeric: tabular-nums;">
                                 ${batch.status === 'fridge' ? this.fmt(times.currentPhaseDuration) : this.fmt(times.totalFridgeTime)}
                             </div>
-                            ${(batch.status === 'fridge' && times.totalFridgeTime > times.currentPhaseDuration) ? `
+                            ${(times.totalFridgeTime > 0 && batch.status !== 'fridge') ? `
                                 <div style="font-size:0.7rem; color:#777; margin-top:2px;">Toplam: ${this.fmt(times.totalFridgeTime)}</div>
                             ` : ''}
                         </div>
@@ -543,15 +868,35 @@
             const batch = await window.App.Storage.getItemById('production_logs', id);
             if (!batch) return;
 
+            const now = Date.now();
+
             if (action === 'to_fridge') {
+                // Ending a Room Phase (either initial 'room' or 'room_final')
+                let duration = 0;
+                if (batch.status === 'room_final' && batch.finalRoomStartTime) {
+                    duration = now - batch.finalRoomStartTime;
+                } else {
+                    duration = now - batch.startTime;
+                }
+
+                batch.history = batch.history || [];
+                batch.history.push({ phase: 'room', duration: duration });
+
                 batch.status = 'fridge';
-                batch.fridgeStartTime = Date.now();
-                batch.history.push({ phase: 'room', duration: Date.now() - batch.startTime });
+                batch.fridgeStartTime = now;
             }
             else if (action === 'from_fridge') {
+                // Ending Fridge Phase
+                let duration = 0;
+                if (batch.fridgeStartTime) {
+                    duration = now - batch.fridgeStartTime;
+                }
+
+                batch.history = batch.history || [];
+                batch.history.push({ phase: 'fridge', duration: duration });
+
                 batch.status = 'room_final';
-                batch.finalRoomStartTime = Date.now();
-                batch.history.push({ phase: 'fridge', duration: Date.now() - batch.fridgeStartTime });
+                batch.finalRoomStartTime = now;
             }
             else if (action === 'complete') {
                 await window.App.Storage.deleteItem('production_logs', batch.id);
@@ -592,15 +937,103 @@
 
             // --- MAIN GRID LIVE UPDATE ---
             if (this.mainInterval) clearInterval(this.mainInterval);
-            this.updateGridTimers = () => {
-                const cards = document.querySelectorAll('.batch-timer-display');
-                if (cards.length === 0) return;
-
+            this.updateGridTimers = async () => {
                 const now = Date.now();
+                // We need data to calculate speed
+                // Fetch cached or fresh
+                const batches = await window.App.Storage.getAllItems('production_logs') || [];
+                const ingredients = await window.App.Storage.getAllItems('ingredients') || [];
+
+                // 1. Update Simple Elasped Timers (Total)
+                const cards = document.querySelectorAll('.batch-timer-display');
                 cards.forEach(el => {
                     const start = parseInt(el.dataset.startTime);
-                    if (!isNaN(start)) {
-                        el.innerText = this.fmt(now - start);
+                    if (!isNaN(start)) el.innerText = this.fmt(now - start);
+                });
+
+                // 2. Update Complex Fermentation Status (Remaining & Progress)
+                batches.forEach(batch => {
+                    const remainingEl = document.getElementById(`batch-remaining-${batch.id}`);
+                    const progressEl = document.getElementById(`batch-progress-${batch.id}`);
+
+                    if (remainingEl || progressEl) {
+                        // Re-calculate Logic (Simplified version of renderBatchCard)
+                        // Note: This duplicates logic. Ideally logic should be centralized.
+                        // But for speed we inline crucial parts.
+
+                        const currentTemp = (batch.status === 'fridge') ? (batch.fridgeTemp || 4) : (batch.roomTemp || 24);
+                        const BASELINE_WORK = 180;
+                        const TOLERANCE_WORK = 180;
+                        let accruedWork = 0;
+
+                        // A. Past History
+                        if (batch.history) {
+                            batch.history.forEach(h => {
+                                const pTemp = (h.phase === 'fridge') ? (batch.fridgeTemp || 4) : (batch.roomTemp || 24);
+                                const params = this.getBatchParams(batch, pTemp, ingredients); // Reuse existing helper
+                                let speed = params && window.App.Engine ? window.App.Engine.calculateFermentationSpeed(params) : ((h.phase === 'fridge') ? 0.15 : 1.0);
+                                accruedWork += (h.duration / 60000) * speed;
+                            });
+                        }
+
+                        // B. Current Phase
+                        let phaseStartTime = batch.startTime;
+                        if (batch.status === 'fridge') phaseStartTime = batch.fridgeStartTime;
+                        if (batch.status === 'room_final') phaseStartTime = batch.finalRoomStartTime;
+
+                        // Fallback validity check for timestamps
+                        if (!phaseStartTime || isNaN(phaseStartTime)) phaseStartTime = batch.startTime;
+
+                        const durationMin = (now - phaseStartTime) / 60000;
+                        const currentParams = this.getBatchParams(batch, currentTemp, ingredients);
+                        let currentSpeed = currentParams && window.App.Engine ? window.App.Engine.calculateFermentationSpeed(currentParams) : ((batch.status === 'fridge') ? 0.15 : 1.0);
+
+                        accruedWork += durationMin * currentSpeed;
+
+                        // Update UI
+                        let progressPct = 0;
+                        let remainingText = "";
+                        let remainingColor = "#aaa";
+                        let barColor = (batch.status === 'fridge') ? '#3498db' : ((batch.status === 'room_final') ? '#e67e22' : '#f1c40f');
+
+                        if (accruedWork < BASELINE_WORK) {
+                            progressPct = Math.min(100, (accruedWork / BASELINE_WORK) * 100);
+                            const remainingWork = BASELINE_WORK - accruedWork;
+                            let timeToPeakMin = (currentSpeed > 0) ? remainingWork / currentSpeed : 0;
+                            const h = Math.floor(timeToPeakMin / 60);
+                            const m = Math.floor(timeToPeakMin % 60);
+                            remainingText = `${h}s ${m}d sonra HAZIR`;
+                            remainingColor = "#fff";
+                        } else {
+                            // Tolerance Phase
+                            const consumedTolerance = accruedWork - BASELINE_WORK;
+                            const remainingToleranceWork = Math.max(0, TOLERANCE_WORK - consumedTolerance);
+                            progressPct = Math.min(100, (consumedTolerance / TOLERANCE_WORK) * 100);
+                            let timeToSpoilMin = (currentSpeed > 0) ? remainingToleranceWork / currentSpeed : 0;
+                            const h = Math.floor(timeToSpoilMin / 60);
+                            const m = Math.floor(timeToSpoilMin % 60);
+
+                            if (timeToSpoilMin > 0) {
+                                remainingText = `<ion-icon name="hourglass-outline" style="vertical-align:text-bottom"></ion-icon> ${h}s ${m}d Kullanılabilir`;
+                                remainingColor = "var(--color-success)";
+                                if (progressPct < 50) barColor = "var(--color-success)";
+                                else if (progressPct < 80) barColor = "#f1c40f";
+                                else barColor = "#e74c3c";
+                            } else {
+                                remainingText = "AŞIRI MAYALANMA!";
+                                remainingColor = "#e74c3c";
+                                barColor = "#e74c3c";
+                            }
+                        }
+
+                        if (remainingEl) {
+                            remainingEl.innerHTML = remainingText;
+                            remainingEl.style.color = remainingColor;
+                        }
+                        if (progressEl) {
+                            progressEl.style.width = `${progressPct}%`;
+                            progressEl.style.background = barColor; // Update bar color in tolerance
+                        }
                     }
                 });
             };
