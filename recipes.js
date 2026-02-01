@@ -349,9 +349,9 @@
                                                 Hedef Süre
                                                 <span id="target-time-val" style="font-weight:bold; color:#fff;">4 Saat</span>
                                             </label>
-                                            <input type="range" class="form-control" id="target-time" min="2" max="24" step="2" value="4" style="padding:0; margin-top:5px;">
+                                            <input type="range" class="form-control" id="target-time" min="1" max="24" step="1" value="4" style="padding:0; margin-top:5px;">
                                             <div style="display:flex; justify-content:space-between; font-size:0.6rem; color:#666; margin-top:2px;">
-                                                <span>2s</span><span>8s</span><span>16s</span><span>24s</span>
+                                                <span>1s</span><span>6s</span><span>12s</span><span>24s</span>
                                             </div>
                                         </div>
 
@@ -688,6 +688,10 @@
             const roomT = parseFloat(document.getElementById('room-temp')?.value) || 22;
             const flourT = parseFloat(document.getElementById('flour-temp')?.value) || roomT;
 
+            // UNIFIED FRICTION SOURCE: Always try to read input, default to 5.
+            let activeFriction = parseFloat(frictionInput?.value);
+            if (isNaN(activeFriction)) activeFriction = 5;
+
             // UI Visibility & Calculation
             const beginnerControls = document.getElementById('beginner-controls');
             const frictionGroup = document.getElementById('friction-group');
@@ -710,8 +714,8 @@
                 const idealTarget = window.App.Engine ? window.App.Engine.calculateTargetDoughTemp(time) : 24;
                 if (targetDoughTempInput) targetDoughTempInput.value = idealTarget; // Auto-set
 
-                // Auto-Calc Water Temp (Friction=5 default for Beginner)
-                const wTemp = window.App.Engine ? window.App.Engine.calculateWaterTemp(idealTarget, roomT, flourT, 5) : 0;
+                // Auto-Calc Water Temp (Use Unified activeFriction)
+                const wTemp = window.App.Engine ? window.App.Engine.calculateWaterTemp(idealTarget, roomT, flourT, activeFriction) : 0;
                 if (waterTempInput) {
                     waterTempInput.value = wTemp;
                     waterTempInput.style.color = wTemp > 50 ? 'red' : (wTemp < 4 ? 'blue' : 'var(--color-primary)');
@@ -730,17 +734,21 @@
 
                 // Manual Calc
                 const manTarget = parseFloat(targetDoughTempInput?.value) || 24;
-                const manFriction = parseFloat(frictionInput?.value) || 5;
-                const wTemp = window.App.Engine ? window.App.Engine.calculateWaterTemp(manTarget, roomT, flourT, manFriction) : 0;
+                // Use activeFriction here too for consistency, or reparsed? Better reuse activeFriction.
+                // But wait, activeFriction reads current input. That is correct for master mode too.
+                const wTemp = window.App.Engine ? window.App.Engine.calculateWaterTemp(manTarget, roomT, flourT, activeFriction) : 0;
                 if (waterTempInput) {
                     waterTempInput.value = wTemp;
                     waterTempInput.style.color = wTemp > 50 ? 'red' : 'var(--color-primary)';
                 }
             }
 
+            // Sync activeFriction variable for later usage if needed (though we defined it below again, 
+            // best to use single source of truth but for now I'm patching the friction reading below)
+
             let totalWeight = totalFlourAmount + waterAmount;
             const avgW = totalFlourAmount > 0 ? (weightedW / totalFlourAmount) : 200;
-            const roomTempInput = parseFloat(document.getElementById('room-temp')?.value) || 24;
+            const roomTempInput = roomT;
 
             // 2. Extras (Ingredients)
             let milkWaterEq = 0;
@@ -833,19 +841,71 @@
             const fatRatio = (totalFat / totalFlourAmount) * 100;
             const milkRatio = (totalMilk / totalFlourAmount) * 100;
 
+            // --- YEAST AUTO-CORRECTION (Prioritized for Beginner Mode) ---
+            const activeMode = document.querySelector('input[name="dev-mode"]:checked')?.value || 'beginner';
+            let yeastCorrectionMsg = '';
+
+            if (activeMode === 'beginner' && totalFlourAmount > 0) {
+                const currentYeastPct = window.App.Engine ? window.App.Engine.getEffectiveYeastPercent(totalYeast, yeastType, totalFlourAmount) : 0;
+                const tTime = parseInt(document.getElementById('target-time')?.value || 4);
+
+                // Validate using Engine
+                if (window.App.Engine && window.App.Engine.validateYeastForTime) {
+                    // Returns needed DRY yeast %
+                    const uncorrectedNeededDryPct = window.App.Engine.validateYeastForTime(currentYeastPct, tTime);
+
+                    if (uncorrectedNeededDryPct !== null) {
+                        // Calculate gram amount for DRY yeast
+                        const neededDryGrams = (uncorrectedNeededDryPct * totalFlourAmount) / 100;
+
+                        // UNIT CONVERSION: Convert Dry Grams back to Selected Yeast Type
+                        let finalAmount = neededDryGrams;
+                        if (yeastType === 'fresh') finalAmount = neededDryGrams * 3.0; // 1 Dry = 3 Fresh
+                        else if (yeastType === 'active_dry') finalAmount = neededDryGrams * 1.1;
+
+                        // Find Yeast Row to Update
+                        const yeastRow = Array.from(document.querySelectorAll('.ingredient-row')).find(row => {
+                            const sel = row.querySelector('.ing-select');
+                            const opt = sel.selectedOptions[0];
+                            // Check both dataset type and actual value to be sure
+                            return (opt && opt.dataset.type === 'yeast') || (opt && opt.text.toLowerCase().includes('maya'));
+                        });
+
+                        if (yeastRow) {
+                            const input = yeastRow.querySelector('.ing-amount');
+                            const currentVal = parseFloat(input.value) || 0;
+
+                            // Only update if significant difference (avoid infinite loops)
+                            if (Math.abs(currentVal - finalAmount) > 0.5) {
+                                input.value = finalAmount.toFixed(1);
+                                // Update locals immediately for simulation to pick up new values
+                                totalYeast = finalAmount;
+                                yeastCorrectionMsg = `<div style="padding:6px; margin-top:5px; background:rgba(241, 196, 15, 0.2); color:#f1c40f; border-radius:4px; font-size:0.8rem;">
+                                    ⚠️ Maya oranı <strong>${tTime} saat</strong> hedefi için güncellendi. (%${uncorrectedNeededDryPct.toFixed(2)} Kuru Maya Eşdeğeri)
+                                 </div>`;
+                            }
+                        }
+                    }
+                }
+            }
+
             // --- EARLY SIMULATION (Blocking) ---
+            // Use current actual yeast, not hypothetical
+            const simYeastAmount = totalYeast;
+
             if (window.App.Engine && totalFlourAmount > 0) {
                 result = window.App.Engine.simulate({
                     totalFlour: totalFlourAmount,
                     wValue: avgW,
-                    yeastAmount: totalYeast,
+                    yeastAmount: simYeastAmount,
                     yeastType: yeastType,
                     saltAmount: totalSalt,
                     waterAmount: waterAmount,
                     effectiveWaterAmount: waterAmount + milkWaterEq,
                     milkRatio: milkRatio,
                     fatRatio: fatRatio,
-                    roomTemp: roomTempInput
+                    roomTemp: roomTempInput,
+                    doughTemp: parseFloat(document.getElementById('target-dough-temp')?.value) // Pass FDT
                 });
             }
 
@@ -1028,45 +1088,26 @@
                     </div>`;
                 }
 
-                // --- YEAST CHECK (Beginner) ---
-                const activeMode = document.querySelector('input[name="dev-mode"]:checked')?.value || 'beginner';
-                if (activeMode === 'beginner' && totalFlourAmount > 0) {
-                    const currentYeastPct = (totalYeast / totalFlourAmount) * 100;
-                    const tTime = parseInt(document.getElementById('target-time')?.value || 4);
-
-                    // Validate using Engine
-                    if (window.App.Engine && window.App.Engine.validateYeastForTime) {
-                        const correctedPct = window.App.Engine.validateYeastForTime(currentYeastPct, tTime);
-
-                        if (correctedPct !== null) {
-                            const newAmount = (correctedPct * totalFlourAmount) / 100;
-                            // Find Yeast Row
-                            const yeastRow = Array.from(document.querySelectorAll('.ingredient-row')).find(row => {
-                                const sel = row.querySelector('.ing-select');
-                                return sel.selectedOptions[0]?.dataset.type === 'yeast';
-                            });
-
-                            if (yeastRow) {
-                                const input = yeastRow.querySelector('.ing-amount');
-                                // Only update if significant difference (avoid loops)
-                                if (Math.abs((parseFloat(input.value) || 0) - newAmount) > 0.1) {
-                                    input.value = newAmount.toFixed(1);
-                                    // Notify User in Analysis
-                                    advisorEl.innerHTML += `<div style="padding:6px; margin-top:5px; background:rgba(241, 196, 15, 0.2); color:#f1c40f; border-radius:4px; font-size:0.8rem;">
-                                ⚠️ Maya oranı <strong>${tTime} saat</strong> için uygun seviyeye (%${correctedPct}) getirildi.
-                             </div>`;
-                                }
-                            }
-                        }
-                    }
+                if (yeastCorrectionMsg) {
+                    advisorEl.innerHTML += yeastCorrectionMsg;
                 }
 
+                // --- fdt calculation was here ---
+
                 // --- FDT CALCULATION ---
-                const flourTemp = parseFloat(document.getElementById('flour-temp')?.value) || 22;
-                const friction = parseFloat(document.getElementById('friction-factor')?.value) || 5;
+                // --- FDT CALCULATION ---
+                // --- FDT CALCULATION ---
+                const flourTemp = flourT;
+
+                // Use activeFriction determined at top of function (syncs with Mode)
+                const currentFriction = activeFriction;
+
                 const targetTemp = parseFloat(document.getElementById('target-dough-temp')?.value) || 24;
                 const desiredDoughTemp = targetTemp;
-                const requiredWaterTemp = (desiredDoughTemp * 3) - (roomTempInput + flourTemp + friction);
+
+                // Calculate using Helper
+                const requiredWaterTemp = window.App.Engine ? window.App.Engine.calculateWaterTemp(desiredDoughTemp, roomTempInput, flourTemp, currentFriction) : 0;
+
 
                 const fdtMsg = `<div style="margin-top:10px; font-size:0.85rem; border-top:1px solid rgba(255,255,255,0.1); padding-top:8px;">
                     <div style="color:#aaa;">❄️ İDEAL SU SICAKLIĞI (HEDEF ${desiredDoughTemp}°C)</div>
