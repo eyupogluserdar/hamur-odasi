@@ -228,13 +228,24 @@
          * @returns {number} Ideal Target Temp (Celsius)
          */
         calculateTargetDoughTemp(hours) {
-            // Rule Table (User Provided)
-            if (hours <= 2) return 27.5; // 27-28
-            if (hours <= 4) return 24.5; // 24-25
-            if (hours <= 8) return 22.5; // 22-23
-            if (hours <= 12) return 20.5; // 20-21
-            // 24h+
-            return 18.5; // 18-19
+            // Granular Temperature Targets
+            // Faster fermentation needs higher FDT to kickstart.
+            // Slower fermentation needs lower FDT to control activity.
+            const h = parseInt(hours);
+
+            if (h <= 1) return 28.0;
+            if (h <= 2) return 27.5;
+            if (h <= 3) return 26.0;
+            if (h <= 4) return 25.0; // Standard
+            if (h <= 5) return 24.5;
+            if (h <= 6) return 24.0;
+            if (h <= 8) return 22.5;
+            if (h <= 9) return 22.0; // NEW: distinct step
+            if (h <= 10) return 21.5; // NEW: distinct step
+            if (h <= 12) return 21.0;
+            if (h <= 15) return 20.5; // NEW: distinct step
+            if (h <= 18) return 20.0;
+            return 19.0; // 24h+
         },
 
         /**
@@ -258,20 +269,52 @@
          * Auto-corrects yeast amount for target time.
          * Returns suggested yeast % or null if current is acceptable.
          */
+        /**
+         * Returns the Ideal Dry Yeast Percentage for a given time target.
+         * Used for deterministic auto-correction in Beginner Mode.
+         * calibrated for 24-28C FDT range.
+         */
+        getIdealYeastPercent(hours, context = null) {
+            // DYNAMIC SOLVER INTEGRATION
+            // If context is missing, assumes "Beginner Standard" defaults.
+            const params = context || {
+                roomTemp: 22,
+                doughTemp: this.calculateTargetDoughTemp(hours), // Auto-FDT
+                totalFlour: 1000,
+                waterAmount: 620, // 62% Hydration (Standard)
+                saltAmount: 20, // 2%
+                wValue: 200, // Standard Flour
+                milkRatio: 0,
+                fatRatio: 0
+            };
+
+            // Call the Reverse Solver
+            // Ensure calculateRequiredYeast exists before calling (Safety)
+            if (this.calculateRequiredYeast) {
+                const result = this.calculateRequiredYeast(hours, params);
+                return Math.round(result * 10000) / 10000;
+            } else {
+                console.warn("calculateRequiredYeast not found!");
+                return 0.5;
+            }
+        },
+
         validateYeastForTime(currentYeastPct, hours) {
-            let idealMin, idealMax;
+            // FIXED: Now delegates to the granular getIdealYeastPercent function.
+            // This ensures the suggested value matches the simulated value exactly.
 
-            // Standard Reference Table (Artisan/Commercial)
-            if (hours <= 2) { idealMin = 1.2; idealMax = 2.5; }
-            else if (hours <= 4) { idealMin = 0.6; idealMax = 1.2; }
-            else if (hours <= 8) { idealMin = 0.3; idealMax = 0.6; }
-            else if (hours <= 12) { idealMin = 0.15; idealMax = 0.3; }
-            else { idealMin = 0.05; idealMax = 0.15; } // 24h
+            const ideal = this.getIdealYeastPercent(hours);
+            if (!ideal) return null;
 
-            if (currentYeastPct < idealMin) return idealMin;
-            if (currentYeastPct > idealMax) return idealMax;
+            // Define Tolerance (e.g. +/- 15%)
+            const tolerance = ideal * 0.15;
 
-            return null; // Acceptable
+            // If current yeast is outside tolerance, suggest the exact ideal.
+            if (currentYeastPct < (ideal - tolerance) || currentYeastPct > (ideal + tolerance)) {
+                return ideal;
+            }
+
+            return null; // A-OK
         },
 
         /**
@@ -355,12 +398,25 @@
             if (yeastPct > 3.0) yeastFactor *= 0.8;
 
             // 3. Environmental Factors
-            const tempFactor = this.getTempFactor(params.roomTemp); // Uses params.roomTemp
+            // EFFECTIVE TEMP CALCULATION (New Logic)
+            // If doughTemp is provided (FDT), use it weighted against Room Temp.
+            // For short fermentations, Dough Temp is dominant.
+            let effectiveTemp = params.roomTemp;
+            if (params.doughTemp && params.doughTemp > 0) {
+                // Simple thermal decay model: (2 * Dough + 1 * Room) / 3
+                // This assumes the dough retains its FDT for a significant portion of the rise.
+                effectiveTemp = (params.doughTemp * 2 + params.roomTemp) / 3;
+            }
+
+            const tempFactor = this.getTempFactor(effectiveTemp);
             const hydroFactor = this.getHydrationFactor(hydrationPct);
             const saltFactor = this.getSaltFactor(saltPct);
 
             // 4. Combined Speed
-            let totalSpeed = yeastFactor * tempFactor * hydroFactor * saltFactor;
+            // NEW: Add Flour Strength Factor
+            const wFactor = this.getFlourStrengthFactor(params.wValue || 200);
+
+            let totalSpeed = yeastFactor * tempFactor * hydroFactor * saltFactor * wFactor;
 
             // 5. Rich Dough Correction (Engine Level)
             if (params.milkRatio > 5) totalSpeed *= 0.8;
@@ -374,9 +430,78 @@
             return totalSpeed;
         },
 
+        /**
+         * REVERSE SOLVER: Calculates required Dry Yeast % for a specific time target.
+         * Based on: Speed = (Baseline / Time)
+         * And: Speed = YeastF * TempF * HydroF * SaltF * WFactor
+         * So: YeastF = (Baseline / Time) / (TempF * HydroF * SaltF * WFactor)
+         */
+        calculateRequiredYeast(hours, params) {
+            const BASELINE_TIME_MIN = 180; // Synced with Simulate (3 Hours)
+            const targetMin = hours * 60;
+            const targetSpeed = BASELINE_TIME_MIN / targetMin;
+
+            const REF_YEAST_PCT = 0.333; // Synced with Engine (1% Fresh = 0.33% Dry)
+
+            // 1. Calculate Factors (excluding Yeast)
+            // Temp: Use FDT if available, else Room
+            let effectiveTemp = params.roomTemp;
+            if (params.doughTemp && params.doughTemp > 0) {
+                effectiveTemp = (params.doughTemp * 2 + params.roomTemp) / 3;
+            }
+            const tempFactor = this.getTempFactor(effectiveTemp);
+
+            // Hydration
+            const effWater = params.effectiveWaterAmount !== undefined ? params.effectiveWaterAmount : params.waterAmount;
+            const hydrationPct = (effWater / params.totalFlour) * 100;
+            const hydroFactor = this.getHydrationFactor(hydrationPct);
+
+            // Salt
+            const saltPct = (params.saltAmount / params.totalFlour) * 100;
+            const saltFactor = this.getSaltFactor(saltPct);
+
+            // Flour Strength
+            const wFactor = this.getFlourStrengthFactor(params.wValue || 200);
+
+            // Richness Penalties (Inverted)
+            let richnessPenalty = 1.0;
+            if (params.milkRatio > 5) richnessPenalty *= 0.8;
+            if (params.fatRatio > 3) richnessPenalty *= 0.85;
+            if (params.milkRatio > 20 || params.fatRatio > 8) richnessPenalty *= 0.9;
+
+            // 2. Solve for Required Yeast Factor
+            // YeastF = TargetSpeed / (AllOtherFactors)
+            const denominator = tempFactor * hydroFactor * saltFactor * wFactor * richnessPenalty;
+
+            if (denominator === 0) return 0.5; // Safety
+
+            const requiredYeastFactor = targetSpeed / denominator;
+
+            // 3. Convert to Percentage
+            // Factor 1.0 = 0.5% Yeast
+            let requiredPct = requiredYeastFactor * REF_YEAST_PCT;
+
+            // Safety Clamp (0.01% - 5%)
+            return Math.max(0.01, Math.min(5.0, requiredPct));
+        },
+
+        /**
+         * Calculates Flour Strength Factor
+         * User Rule: Strong Flour (High W) -> Needs LESS Yeast (Higher Efficiency)
+         * Weak Flour (Low W) -> Needs MORE Yeast (Lower Efficiency)
+         */
+        getFlourStrengthFactor(wValue) {
+            // Baseline: 200W = 1.0
+            // 300W = ~1.1x Speed/Efficiency
+            // 100W = ~0.9x Speed/Efficiency
+            const diff = wValue - 200;
+            // Every 100W adds 10% efficiency
+            return 1.0 + (diff * 0.001);
+        },
+
+
         simulate(params) {
             const BASELINE_TIME_MIN = 180; // 3 Hours
-
             const totalSpeed = this.calculateFermentationSpeed(params);
 
             // Predict Time
